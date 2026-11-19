@@ -34,6 +34,16 @@ pub fn typed_data(td: &TypedData, injective_tx: Option<&Web3Tx>, signer: &EthAdd
     }
     let mut out = site(ctx);
     out.push(rule(td));
+    // A domain without a chainId binds the signature to no chain: it is good on every chain
+    // where the verifying contract (or a copy at the same address) accepts it.
+    if td.chain_id().is_none() {
+        out.push(finding(
+            "no_chain_id",
+            Level::Amber,
+            "This signature names no chain, so it is valid on every chain, not only this one.".into(),
+            json!({}),
+        ));
+    }
     Assessment::from(out)
 }
 
@@ -127,6 +137,40 @@ mod tests {
     const SPENDER: &str = "0x2222222222222222222222222222222222222222";
     const TOKEN: &str = "0x1111111111111111111111111111111111111111";
 
+    /// Review: typed data that names no chainId is valid on every chain; it is amber, and
+    /// naming one takes the warning away.
+    #[test]
+    fn no_chain_id_is_amber() {
+        let order = |domain: Value| {
+            td(
+                domain,
+                "Order",
+                json!({ "Order": [{ "name": "amount", "type": "uint256" }] }),
+                json!({ "amount": "1000" }),
+            )
+        };
+        let a = grade(&order(json!({ "name": "Some Dapp", "verifyingContract": TOKEN })));
+        assert_eq!(a.level, Level::Amber);
+        assert!(a.findings.iter().any(|f| f.rule == "no_chain_id"));
+
+        let with_chain = TypedData::parse(
+            &json!({
+                "types": {
+                    "EIP712Domain": [{ "name": "name", "type": "string" }, { "name": "chainId", "type": "uint256" }],
+                    "Order": [{ "name": "amount", "type": "uint256" }]
+                },
+                "primaryType": "Order",
+                "domain": { "name": "Some Dapp", "chainId": 8453 },
+                "message": { "amount": "1000" }
+            })
+            .to_string(),
+        )
+        .unwrap();
+        let a = grade(&with_chain);
+        assert_eq!(a.level, Level::Info);
+        assert!(a.findings.iter().all(|f| f.rule != "no_chain_id"));
+    }
+
     #[test]
     fn permits() {
         let permit_types = json!({ "Permit": [
@@ -180,9 +224,12 @@ mod tests {
             json!({ "text": "hi" }),
         );
         let a = grade(&t);
-        assert_eq!(
-            (a.level, a.findings[0].message.as_str()),
-            (Level::Info, "Signs a structured message for Some Dapp.")
+        // Amber, not Info: this domain names no chainId (see no_chain_id_is_amber).
+        assert_eq!(a.level, Level::Amber);
+        assert!(
+            a.findings
+                .iter()
+                .any(|f| f.message == "Signs a structured message for Some Dapp.")
         );
     }
 }
