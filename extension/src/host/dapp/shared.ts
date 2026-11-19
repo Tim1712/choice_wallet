@@ -49,8 +49,9 @@ export interface DappHost {
   touch(): Promise<void>;
   /** Open the approval window for request `id`; its window ID, to notice it closing. */
   openWindow(id: string): Promise<number | undefined>;
-  /** Tell every page that its view (accounts, chain) may have changed. */
-  notify(): void;
+  /** Tell connected sites' pages that their view (accounts, chain) may have changed;
+   *  `also`, a site just disconnected, is told too. */
+  notify(also?: string | readonly string[]): void;
   /** The chains the user adds (../addedchains.ts). */
   chains: {
     listed(chainId: number): Promise<ListedChain | undefined>;

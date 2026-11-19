@@ -1244,6 +1244,25 @@ try {
   await a.click("Connect");
   const accounts = (await answer()).ok;
   if (JSON.stringify(accounts) !== JSON.stringify([addrs[1].toLowerCase()])) throw new Error(`connected accounts: ${JSON.stringify(accounts)}`);
+  // "Something changed" reaches the connected site only: a site that never connected
+  // (here the same page on another origin) hears nothing when the wallet locks or unlocks.
+  {
+    const stranger = await pageFor((await send("Target.createTarget", { url: `http://localhost:${lcd.address().port}/dapp.html` })).targetId);
+    await stranger.waitText("Test dapp");
+    const count = `window.__changed = 0; addEventListener("message", (e) => { if (e.source === window && e.data?.target === "choice-wallet:page" && e.data?.event === "changed") window.__changed++; }); 1`;
+    await site.eval(count);
+    await stranger.eval(count);
+    const wallet = await openPopup();
+    await wallet.waitText("Account");
+    await wallet.eval(`chrome.runtime.sendMessage({ type: "lock" })`);
+    await wallet.eval(`chrome.runtime.sendMessage({ type: "unlock", password: "correct horse battery staple" })`);
+    await sleep(1000);
+    const [heard, strangerHeard] = [await site.eval("window.__changed"), await stranger.eval("window.__changed")];
+    if (!(heard > 0) || strangerHeard !== 0) throw new Error(`"changed": connected site heard ${heard}, unconnected site heard ${strangerHeard}`);
+    console.log(`changed events: the connected site heard ${heard}, a site that never connected heard none`);
+    await wallet.close();
+    await stranger.close();
+  }
   const message = `0x${Buffer.from("Sign in to the test dapp").toString("hex")}`;
   await ask("personal_sign", [message, addrs[1]]);
   a = await approval();

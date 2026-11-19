@@ -14,6 +14,7 @@ import { bytesToBase64, explorerTxUrl, imageSize, isNetworkId, LOGO_SIDE, MAX_IM
 import { createService, dappOrigin, fromOwnPage, type Store } from "./host/service";
 import { callVault } from "./host/vault";
 import { MAX_REQUEST } from "./limits";
+import { notifyConnected } from "./notify";
 
 // Content scripts never read the wallet's storage (the vault, sealed secrets, grants,
 // endpoints): only the extension's own pages and this worker.
@@ -82,11 +83,21 @@ const service = createService({
     const w = await chrome.windows.create({ url: chrome.runtime.getURL(`popup.html?approve=${id}`), type: "popup", focused: true, ...APPROVAL, ...place });
     return w?.id;
   },
-  notify() {
-    // Pages ask again for what they may see; nothing about other sites goes out.
-    void chrome.tabs.query({}).then((tabs) => {
-      for (const t of tabs) if (t.id !== undefined) chrome.tabs.sendMessage(t.id, { choice: "changed" }).catch(() => {});
-    });
+  notify(also) {
+    // Pages ask again for what they may see; nothing about other sites goes out. Only
+    // connected sites' tabs (and `also`, a site just disconnected) are told (./notify.ts).
+    void notifyConnected(
+      {
+        connected: async () => Object.keys(((await chrome.storage.local.get(["connections"])) as { connections?: Record<string, unknown> }).connections ?? {}),
+        tabs: async () => (await chrome.tabs.query({})).flatMap((t) => (t.id === undefined ? [] : [t.id])),
+        originOf: async (tab) => {
+          const o: unknown = await chrome.tabs.sendMessage(tab, { choice: "origin" }, { frameId: 0 });
+          return typeof o === "string" ? o : null;
+        },
+        tell: (tab) => void chrome.tabs.sendMessage(tab, { choice: "changed" }, { frameId: 0 }).catch(() => {}),
+      },
+      also,
+    ).catch(() => {});
   },
   refresh() {
     // The wallet's own pages only (no listener open is fine).
