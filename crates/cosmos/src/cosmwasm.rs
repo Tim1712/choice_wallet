@@ -170,7 +170,21 @@ pub fn is_token_id(id: &str) -> bool {
 /// Parse a `MsgExecuteContract.msg`. The bytes must be UTF-8 JSON, as wasmd requires.
 pub fn parse(msg: &[u8]) -> Result<ContractCall, Error> {
     serde_json::from_slice::<serde_json::Value>(msg).map_err(|_| Error::ContractJson)?;
-    let call = match serde_json::from_slice::<Known>(msg) {
+    let known = serde_json::from_slice::<Known>(msg);
+    // A CW20 amount the wallet can't read as written is refused, not passed on as an
+    // unknown call: cw20's Uint128 parses "0340…" and "+1" as numbers, so an allowance or
+    // transfer written that way would move tokens while graded as any contract call.
+    if let Ok(
+        Known::Transfer { amount, .. }
+        | Known::Send { amount, .. }
+        | Known::IncreaseAllowance { amount, .. }
+        | Known::DecreaseAllowance { amount, .. },
+    ) = &known
+        && !is_canonical_amount(amount)
+    {
+        return Err(Error::Amount(amount.clone()));
+    }
+    let call = match known {
         Ok(Known::Transfer { recipient, amount }) if is_canonical_amount(&amount) => {
             ContractCall::Cw20Transfer { recipient, amount }
         }
@@ -377,15 +391,15 @@ mod tests {
 
     #[test]
     fn anything_unusual_is_other() {
+        // Shapes cw20 itself rejects (cw_serde denies unknown fields; Uint128 is a string).
+        // A malformed amount cw20 would still read ("05") is refused: see refuses_non_json.
         for json in [
             r#"{"transfer":{"recipient":"inj1a","amount":"5","extra":1}}"#,
             r#"{"transfer":{"recipient":"inj1a","amount":"5","amount":"6"}}"#,
             r#"{"transfer":{"recipient":"inj1a","amount":"5"},"send":{}}"#,
-            r#"{"transfer":{"recipient":"inj1a","amount":"05"}}"#,
             r#"{"transfer":{"recipient":"inj1a","amount":5}}"#,
             r#"{"increase_allowance":{"spender":"inj1a","amount":"5","memo":"x"}}"#,
             r#"{"decrease_allowance":{"spender":"inj1a","amount":"5","expires":{"never":{}}}}"#,
-            r#"{"decrease_allowance":{"spender":"inj1a","amount":"-5"}}"#,
         ] {
             assert_eq!(parse(json.as_bytes()).unwrap(), ContractCall::Other, "{json}");
         }
@@ -394,6 +408,17 @@ mod tests {
     #[test]
     fn refuses_non_json() {
         assert_eq!(parse(b"not json").unwrap_err(), Error::ContractJson);
+        // Review: a CW20 amount cw20 would read but the wallet can't is refused.
+        for bad in ["0340282366920938463463374607431768211455", "+1", " 1", "1.0", "-1", ""] {
+            for json in [
+                format!(r#"{{"increase_allowance":{{"spender":"inj1x","amount":"{bad}"}}}}"#),
+                format!(r#"{{"transfer":{{"recipient":"inj1x","amount":"{bad}"}}}}"#),
+                format!(r#"{{"send":{{"contract":"inj1x","amount":"{bad}","msg":""}}}}"#),
+                format!(r#"{{"decrease_allowance":{{"spender":"inj1x","amount":"{bad}"}}}}"#),
+            ] {
+                assert_eq!(parse(json.as_bytes()).unwrap_err(), Error::Amount(bad.into()), "{json}");
+            }
+        }
         assert_eq!(parse(&[0xff, 0xfe]).unwrap_err(), Error::ContractJson);
     }
 }
