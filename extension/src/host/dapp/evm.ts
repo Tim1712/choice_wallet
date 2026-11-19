@@ -259,6 +259,9 @@ export function createEvmSite(core: SiteCore) {
     const list = Array.isArray(params) ? params : [];
     // Locked (or watch-only): one answer for every signature request, before any address is
     // compared, so a site can't test a guess at the account while it is locked.
+    // A site that isn't connected hears only that, first: before the lock is checked, so it
+    // can't watch the wallet lock, unlock or switch accounts (as Cosmos does).
+    if (!(await isConnected(origin))) return no(UNAUTHORIZED, "Connect to Choice Wallet first.");
     if (!(await h.unlocked())) return no(UNAUTHORIZED, "Choice Wallet is locked, or this account can't sign. Unlock it, then ask again.");
     const me = async () => (await h.unlocked())?.account.addresses[chain.caip2] ?? "";
     /** The account the site named: only it signs, whichever account is in use at review. */

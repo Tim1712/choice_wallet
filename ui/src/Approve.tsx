@@ -407,7 +407,7 @@ export function SignBody({ review, network, typed, onTyped, account }: { review:
         {view?.memo && (
           <div className="row">
             <span>Memo</span>
-            <span>{view.memo}</span>
+            <span>{visible(view.memo)}</span>
           </div>
         )}
         {review.checkedBy && (
@@ -581,7 +581,7 @@ function TypedData({ d }: { d: Record<string, unknown> }) {
       <Rows>
         <div className="row">
           <span>App</span>
-          <span>{String(domain["name"] ?? "Not named")}</span>
+          <span>{domain["name"] === undefined ? "Not named" : visible(String(domain["name"]))}</span>
         </div>
         {domain["verifyingContract"] !== undefined && (
           <div className="row">
@@ -591,7 +591,7 @@ function TypedData({ d }: { d: Record<string, unknown> }) {
         )}
         <div className="row">
           <span>Type</span>
-          <span>{String(d["primary_type"])}</span>
+          <span>{visible(String(d["primary_type"]))}</span>
         </div>
       </Rows>
       <div className="surface">
