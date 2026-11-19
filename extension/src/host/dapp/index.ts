@@ -325,7 +325,8 @@ export function createDapps(h: DappHost) {
       await forgetSiteChains(origin);
       // Its requests still waiting end with it.
       for (const w of [...waiting.values()]) if (w.req.origin === origin) settle(w.req.id, no(USER_REJECTED, "The site was disconnected."));
-      h.notify();
+      // Its grant is gone: told by name, so it drops the account it shows.
+      h.notify(origin);
     }
     return connections();
   }

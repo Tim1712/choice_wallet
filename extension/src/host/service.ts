@@ -56,8 +56,9 @@ export interface Deps {
   cancelLock(): void;
   /** Open the approval window for a site's request; its window ID. */
   openWindow(requestId: string): Promise<number | undefined>;
-  /** Tell open pages that what they see (accounts, chain) may have changed. */
-  notify(): void;
+  /** Tell connected sites' open pages that what they see (accounts, chain) may have
+   *  changed; `also`, a site just disconnected, is told too. */
+  notify(also?: string | readonly string[]): void;
   /** Tell the wallet's own open pages (the popup) to read their data again. */
   refresh?(): void;
   /** A browser notification; false when it wasn't shown (the popup is open). */
@@ -613,9 +614,12 @@ export function createService(d: Deps) {
       case "reset": {
         const per = solanaMintKeys((await wallets.stored()).accounts);
         const rest = ((await d.local.keys?.()) ?? []).filter((k) => !DEVICE_KEYS.has(k));
+        // The sites connected until now, told after the reset drops their grants.
+        const wereConnected = Object.keys(((await d.local.get(["connections"])) as { connections?: Record<string, unknown> }).connections ?? {});
         const out = await wallets.reset(r.password, [...new Set([...WALLET_KEYS, ...per, ...rest, ...(await snapshots.keys())])]);
         if (out.ok) {
           dapps.rejectAll("The wallet was reset.");
+          d.notify(wereConnected);
           // In their own turns too, after anything they had under way (run-2 C14). Not
           // awaited: a check waiting on a slow endpoint doesn't hold up the reset.
           void watcher.clear().catch(() => {});

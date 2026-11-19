@@ -37,8 +37,11 @@ window.addEventListener("message", (e: MessageEvent) => {
   }
 });
 
-chrome.runtime.onMessage.addListener((message: unknown, sender) => {
-  if (sender.id === chrome.runtime.id && typeof message === "object" && message !== null && (message as { choice?: unknown }).choice === "changed") {
-    window.postMessage({ target: TO_PAGE, event: "changed" }, "/");
-  }
+chrome.runtime.onMessage.addListener((message: unknown, sender, sendResponse) => {
+  if (sender.id !== chrome.runtime.id || typeof message !== "object" || message === null) return;
+  const choice = (message as { choice?: unknown }).choice;
+  // The worker asks which site this tab is on, to tell only connected sites (./notify.ts).
+  // The answer stays in the extension; the page sees nothing.
+  if (choice === "origin") sendResponse(window.location.origin);
+  if (choice === "changed") window.postMessage({ target: TO_PAGE, event: "changed" }, "/");
 });
