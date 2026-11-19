@@ -424,6 +424,10 @@ try {
         }
         if (!ok) throw new Error(`no enabled button "${text}"; page: ${await page.eval("document.body.innerText")}`);
       },
+      /** A real key press, to the focused element. */
+      async press(key, code = key, keyCode = 13) {
+        for (const type of ["keyDown", "keyUp"]) await send("Input.dispatchKeyEvent", { type, key, code, windowsVirtualKeyCode: keyCode, ...(type === "keyDown" && key === "Enter" ? { text: "\r" } : {}) }, sessionId);
+      },
       async fill(selector, index, value) {
         await page.eval(`(() => { const el = document.querySelectorAll(${JSON.stringify(selector)})[${index}];
           const proto = el instanceof HTMLTextAreaElement ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype;
@@ -466,7 +470,10 @@ try {
   await p.fill("input[type=password]", 0, "correct horse battery staple");
   await p.fill("input[type=password]", 1, "correct horse battery staple");
   await p.shot("04-password");
-  await p.click("Create wallet");
+  // Enter in the password field creates the wallet (it once pressed the back arrow, the
+  // form's first submit button, and dropped the new phrase).
+  await p.eval(`document.querySelectorAll("input[type=password]")[1].focus()`);
+  await p.press("Enter");
   await p.waitText("Account 1");
   if (live) {
     // The default mainnet endpoints, from the browser: a fresh account has no tokens.

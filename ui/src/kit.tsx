@@ -24,7 +24,7 @@ export function Screen({ top, children, foot, tabs, overlay }: { top?: ReactNode
 export function BackBar({ title, onBack }: { title: string; onBack: () => void }) {
   return (
     <>
-      <button className="icon-btn" aria-label="Back" onClick={onBack} style={{ marginLeft: -8 }}>
+      <button type="button" className="icon-btn" aria-label="Back" onClick={onBack} style={{ marginLeft: -8 }}>
         <BackIcon size={20} />
       </button>
       <span className="title">{title}</span>

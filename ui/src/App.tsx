@@ -114,7 +114,14 @@ export function App() {
           step={view.created}
           busy={busy}
           error={error}
-          onBack={() => go({ name: "welcome" })}
+          // Back is the step before: a created phrase's check (the phrase kept), or the import.
+          onBack={() =>
+            go(
+              view.created && "mnemonic" in view.secret
+                ? { name: "confirm", phrase: view.secret.mnemonic }
+                : { name: "import", what: "mnemonic" in view.secret ? "mnemonic" : "private_key" },
+            )
+          }
           onSubmit={(password) => void run({ type: "create", secret: view.secret, password, imported: !view.created }, show)}
         />
       );
