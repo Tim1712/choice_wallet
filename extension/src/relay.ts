@@ -43,5 +43,6 @@ chrome.runtime.onMessage.addListener((message: unknown, sender, sendResponse) =>
   // The worker asks which site this tab is on, to tell only connected sites (./notify.ts).
   // The answer stays in the extension; the page sees nothing.
   if (choice === "origin") sendResponse(window.location.origin);
-  if (choice === "changed") window.postMessage({ target: TO_PAGE, event: "changed" }, "/");
+  // Only for the site it was meant for: the tab may have moved on since it said which.
+  if (choice === "changed" && (message as { origin?: unknown }).origin === window.location.origin) window.postMessage({ target: TO_PAGE, event: "changed" }, "/");
 });

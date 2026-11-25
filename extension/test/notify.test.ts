@@ -9,6 +9,7 @@ import { notifyConnected, type NotifyIo } from "../src/notify";
 
 function tabs(origins: Record<number, string | null>, connected: string[]) {
   const told: number[] = [];
+  const said: string[] = [];
   const io: NotifyIo = {
     connected: async () => connected,
     tabs: async () => Object.keys(origins).map(Number),
@@ -16,15 +17,20 @@ function tabs(origins: Record<number, string | null>, connected: string[]) {
       if (origins[t] === null) throw new Error("no relay in this tab");
       return origins[t]!;
     },
-    tell: (t) => void told.push(t),
+    tell: (t, origin) => {
+      told.push(t);
+      said.push(origin);
+    },
   };
-  return { io, told };
+  return { io, told, said };
 }
 
 test("only connected sites' tabs hear that something changed", async () => {
-  const { io, told } = tabs({ 1: "https://app.example", 2: "https://tracker.example", 3: "https://app.example", 4: null }, ["https://app.example"]);
+  const { io, told, said } = tabs({ 1: "https://app.example", 2: "https://tracker.example", 3: "https://app.example", 4: null }, ["https://app.example"]);
   await notifyConnected(io);
   assert.deepEqual(told.sort(), [1, 3]);
+  // Each ping names the site it is for, which the relay checks against its page.
+  assert.deepEqual(said, ["https://app.example", "https://app.example"]);
 });
 
 test("nobody connected: no tab hears anything", async () => {
