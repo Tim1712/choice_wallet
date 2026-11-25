@@ -414,8 +414,8 @@ export function createTransfers(c: BridgeContext) {
     const transfer = { to: to.key, amount: s.amount, account: me, recipient: s.recipient };
     if (step === "approve") {
       const expect = (d: EvmDisplayLike) => (d.call["type"] === "approve" && same(String(d.call["spender"]), tm) && d.call["amount"] === s.amount && same(d.to, from.usdc) ? null : "The approval isn't the one asked for.");
-      if (from.kind === "injective") return sender.prepareEvmCall(network, account, { to: from.usdc, amount, call: { type: "bridge_approve" }, tokens: [usdcKey], extra, expect });
-      return sender.prepareSourceCall(network, account, sourceOfChain(from), { to: from.usdc, amount, call: { type: "bridge_approve" }, usdcHeld: held.usdc, burns: 0n, extra, expect });
+      if (from.kind === "injective") return sender.prepareEvmCall(network, account, { to: from.usdc, amount, call: { type: "bridge_approve" }, tokens: [usdcKey], extra, expect, erc20: from.usdc });
+      return sender.prepareSourceCall(network, account, sourceOfChain(from), { to: from.usdc, amount, call: { type: "bridge_approve" }, usdcHeld: held.usdc, burns: 0n, extra, expect, erc20: from.usdc });
     }
     if (s.delivery === "gas_drop" && !BRIDGE_RECEIVER[network]) return fail("gas_drop", "The INJ top-up isn't available on this network.");
     const f = burnFields(network, s, to);

@@ -256,6 +256,7 @@ export function createSwaps(sender: Sender, session: Store, fetch: Fetch, shown:
         to: q.tokenIn,
         amount,
         call: { type: "approve" },
+        erc20: q.tokenIn,
         tokens,
         extra,
         expect: (d) => (d.call["type"] === "approve" && same(String(d.call["spender"]), net.choice.permit2) && d.call["amount"] === amount.toString() ? null : "The approval isn't the one asked for."),

@@ -650,11 +650,11 @@ fn contract_call(
                 }
                 // approve(spender, 0) takes an ERC20 allowance back, but on an ERC721 the same
                 // bytes approve `spender` for NFT #0, which it can then take. Only a token the
-                // wallet itself vouches for (its own revoke) reads as a revoke.
-                if sel == APPROVE
-                    && amount.is_zero()
-                    && !ctx.erc20_contracts.iter().any(|c| c.eq_ignore_ascii_case(&to))
-                {
+                // wallet itself vouches for (its own revoke or approval, or the chain's pinned
+                // USDC) reads as a revoke.
+                let vouched = ctx.erc20_contracts.iter().any(|c| c.eq_ignore_ascii_case(&to))
+                    || chain.cctp.is_some_and(|(_, local)| local.usdc() == tx.to);
+                if sel == APPROVE && amount.is_zero() && !vouched {
                     let s = spender.to_checksum_hex();
                     out.push(finding(
                         "approve_zero_ambiguous",
@@ -680,14 +680,26 @@ fn contract_call(
                     .or_else(|| chain.cctp.and_then(|(c, _)| bridge::known_name(c, &spender)))
                     .or_else(|| (spender == talis::seaport()).then_some("Seaport"))
                     .or_else(|| chain.name(&spender));
-                out.push(erc20_allowance(
+                let mut allowance = erc20_allowance(
                     ctx,
                     &to,
                     &spender.to_checksum_hex(),
                     named,
                     amount,
                     sel == APPROVE || sel == APPROVE_AND_CALL || sel == APPROVE_AND_CALL_DATA,
-                ));
+                );
+                // On an ERC721 the same bytes let `spender` take NFT #amount: both readings,
+                // unless the wallet vouches for the token as an ERC20 (review-3). An amount read
+                // as unlimited is red already, and keeps its one reading.
+                if sel == APPROVE && !vouched && amount < UNLIMITED {
+                    let who = named.map_or_else(|| short(&spender.to_checksum_hex()), str::to_owned);
+                    allowance.message = format!(
+                        "On a token: {} On an NFT collection, lets {who} take NFT #{amount}.",
+                        allowance.message
+                    );
+                    allowance.params["token_id"] = json!(amount.to_string());
+                }
+                out.push(allowance);
                 return;
             }
         }
@@ -2088,6 +2100,24 @@ mod tests {
         let a = grade(&approve(U256::MAX));
         assert_eq!((a.level, a.findings[0].rule), (Level::Red, "unlimited_allowance"));
         assert_eq!(grade(&approve(U256::from_u128(5))).level, Level::Amber);
+        // Review-3: approve(x, 7) on an ERC721 lets x take NFT #7. A contract the wallet
+        // doesn't vouch for as an ERC20 gets both readings; one it does, the allowance alone.
+        let a = grade(&approve(U256::from_u128(7)));
+        assert_eq!((a.level, a.findings[0].rule), (Level::Amber, "allowance"));
+        assert_eq!(
+            a.findings[0].message,
+            "On a token: 0x2222…2222 could spend this token up to the amount shown. On an NFT collection, lets 0x2222…2222 take NFT #7."
+        );
+        assert_eq!(a.findings[0].params["token_id"], "7");
+        let own = Context {
+            erc20_contracts: vec![token.to_checksum_hex()],
+            ..Default::default()
+        };
+        let a = evm_transaction(&approve(U256::from_u128(7)), &EvmSide::injective(&MAINNET), &own);
+        assert_eq!(
+            a.findings[0].message,
+            "0x2222…2222 could spend this token up to the amount shown."
+        );
         // approve(x, 0) is a revoke on an ERC20 and a grant of NFT #0 on an ERC721: amber,
         // naming both, unless the wallet itself vouches for the token (its own revoke).
         let a = grade(&approve(U256::ZERO));
@@ -2551,9 +2581,12 @@ mod tests {
             EthAddress::from_bytes([0x11; 20]),
             call(APPROVE, &[addr_word(*permit2.as_bytes()), small]),
         ));
-        assert_eq!(
-            a.findings[0].message,
-            "Permit2 could spend this token up to the amount shown."
+        assert!(
+            a.findings[0]
+                .message
+                .starts_with("On a token: Permit2 could spend this token up to the amount shown."),
+            "{}",
+            a.findings[0].message
         );
     }
 
