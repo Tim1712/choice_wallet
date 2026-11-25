@@ -217,6 +217,10 @@ test("Base to Arbitrum, with Injective at neither end: approve and burn on Base,
   assert.equal(sol.own, true);
   const solBurn = ok<Review>(await service.handle({ type: "prepare_bridge", quote: sol.id }));
   assert.equal(solBurn.display.call["chain"], "Solana");
+  // The vault has the address book here too, so the account's own Solana wallet is named as
+  // the user's, as from Injective; it was amber "not one of your accounts" with none.
+  assert.ok(rules(solBurn).includes("bridge_to_self"), rules(solBurn).join());
+  assert.ok(!rules(solBurn).includes("bridge_recipient"), rules(solBurn).join());
 });
 
 test("Base into Injective: a burn anyone may mint; minted here when nobody has", async () => {
