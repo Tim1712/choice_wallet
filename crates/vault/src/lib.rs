@@ -98,6 +98,23 @@ fn params<T: DeserializeOwned>(raw: Option<&RawValue>) -> Result<T, VaultError> 
     serde_json::from_str(raw.map_or("{}", RawValue::get)).map_err(|e| VaultError::bad(e.to_string()))
 }
 
+/// A parse error that can't carry what was sent. serde quotes the value it didn't expect
+/// ("unknown variant `abandon …`", "invalid type: string \"…\""), so where a secret could be
+/// that value, only a missing field's name (the method's own) is kept.
+fn opaque(method: &str, e: &serde_json::Error) -> VaultError {
+    let message = e.to_string();
+    match message.strip_prefix("missing field `").and_then(|m| m.split_once('`')) {
+        Some((field, _)) => VaultError::bad(format!("{method}: missing field `{field}`")),
+        None => VaultError::bad(format!("{method}: params don't fit the method")),
+    }
+}
+
+/// Params of a method that takes a password, a secret or the unlock key: its errors are
+/// [`opaque`].
+fn secret_params<'a, T: Deserialize<'a>>(method: &str, raw: Option<&'a RawValue>) -> Result<T, VaultError> {
+    serde_json::from_str(raw.map_or("{}", RawValue::get)).map_err(|e| opaque(method, &e))
+}
+
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct Reveal {
@@ -242,7 +259,8 @@ fn borrowed<'a, T: Deserialize<'a>>(raw: Option<&'a RawValue>) -> Result<T, Vaul
 }
 
 fn call(request: &str) -> Result<Value, VaultError> {
-    let env: Envelope = serde_json::from_str(request).map_err(|e| VaultError::bad(e.to_string()))?;
+    // The whole request could be a secret method's, so its message can't quote it either.
+    let env: Envelope = serde_json::from_str(request).map_err(|e| opaque("request", &e))?;
     let p = env.params;
     match env.method.as_str() {
         "version" => Ok(json!({ "protocol": PROTOCOL, "vault": env!("CARGO_PKG_VERSION") })),
@@ -253,12 +271,12 @@ fn call(request: &str) -> Result<Value, VaultError> {
             Ok(json!({ "phrase": m.phrase().as_str() }))
         }
         "create_vault" => {
-            let CreateVault { password } = params(p)?;
+            let CreateVault { password } = secret_params("create_vault", p)?;
             let (vault, key) = keys::create_vault(&password)?;
             Ok(json!({ "vault": hexutil::encode(&vault), "unlock_key": hexutil::encode(key.as_bytes()) }))
         }
         "unlock" => {
-            let Unlock { vault, password } = params(p)?;
+            let Unlock { vault, password } = secret_params("unlock", p)?;
             let key = keys::unlock(&vault, &password)?;
             Ok(json!({ "unlock_key": hexutil::encode(key.as_bytes()) }))
         }
@@ -267,7 +285,7 @@ fn call(request: &str) -> Result<Value, VaultError> {
                 unlock_key,
                 wallet,
                 secret,
-            } = params(p)?;
+            } = secret_params("seal_secret", p)?;
             let (sealed, kind) = keys::seal_secret(&unlock_key, &wallet, secret)?;
             Ok(json!({ "secret": hexutil::encode(&sealed), "kind": kind }))
         }
@@ -276,7 +294,7 @@ fn call(request: &str) -> Result<Value, VaultError> {
                 keystore,
                 password,
                 wallet,
-            } = params(p)?;
+            } = secret_params("migrate", p)?;
             let (m, kind) = keys::migrate(&keystore, &password, &wallet)?;
             Ok(json!({
                 "vault": hexutil::encode(&m.vault),
@@ -291,7 +309,7 @@ fn call(request: &str) -> Result<Value, VaultError> {
                 wallet,
                 unlock_key,
                 accounts,
-            } = params(p)?;
+            } = secret_params("accounts", p)?;
             let list = accounts
                 .into_iter()
                 .map(|a| {
@@ -328,7 +346,7 @@ fn call(request: &str) -> Result<Value, VaultError> {
                 secret,
                 wallet,
                 account,
-            } = params(p)?;
+            } = secret_params("reveal", p)?;
             keys::reveal(&vault, &password, &secret, &wallet, account)
         }
         "change_password" => {
@@ -337,7 +355,7 @@ fn call(request: &str) -> Result<Value, VaultError> {
                 password,
                 new_password,
                 secrets,
-            } = params(p)?;
+            } = secret_params("change_password", p)?;
             let r = keys::change_password(&vault, &password, &new_password, &secrets)?;
             let sealed: serde_json::Map<String, Value> = secrets
                 .keys()
@@ -367,7 +385,7 @@ fn call(request: &str) -> Result<Value, VaultError> {
                 account,
                 request,
                 digest,
-            } = borrowed(p)?;
+            } = secret_params("sign", p)?;
             let checked = request::decode(request)?;
             if checked.solana() {
                 let key = keys::solana_key(&secret, &wallet, &unlock_key, account)?;

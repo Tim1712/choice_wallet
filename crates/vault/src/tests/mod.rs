@@ -9,6 +9,7 @@ use super::handle;
 
 mod bridge;
 mod cosmos;
+mod errors;
 mod evm;
 mod keys;
 mod ledger;
