@@ -5,11 +5,12 @@ const ALPHABET: &[u8; 58] = b"123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqr
 /// Encode bytes. Each leading zero byte becomes a leading `1`.
 pub fn encode(bytes: &[u8]) -> String {
     let zeros = bytes.iter().take_while(|&&b| b == 0).count();
-    // Base-58 digits, least significant first.
-    let mut digits: Vec<u8> = Vec::new();
+    // Base-58 digits, least significant first: room for all of them from the start (log 256 /
+    // log 58 < 1.37), and wiped after, since a key pair is encoded here too.
+    let mut digits = zeroize::Zeroizing::new(Vec::with_capacity(bytes.len() * 137 / 100 + 1));
     for &b in &bytes[zeros..] {
         let mut carry = u32::from(b);
-        for d in &mut digits {
+        for d in digits.iter_mut() {
             carry += u32::from(*d) << 8;
             *d = (carry % 58) as u8;
             carry /= 58;

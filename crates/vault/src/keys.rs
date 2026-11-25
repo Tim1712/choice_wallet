@@ -11,6 +11,7 @@ use zeroize::Zeroizing;
 
 use crate::chains::{CHAINS, SOLANA};
 use crate::error::{KEYSTORE, VaultError};
+use crate::secret_json;
 use crate::util::hex;
 
 /// The secret a new keystore holds.
@@ -145,12 +146,26 @@ pub(crate) fn reveal(
     secret_hex: &str,
     wallet: &str,
     account: Option<Account>,
-) -> Result<Value, VaultError> {
+) -> Result<Zeroizing<String>, VaultError> {
+    #[derive(Serialize)]
+    struct Phrase<'a> {
+        phrase: &'a str,
+    }
+    #[derive(Serialize)]
+    struct Key<'a> {
+        private_key: &'a str,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        solana_private_key: Option<Option<&'a str>>,
+    }
     let key = unlock(vault_hex, password)?;
     let secret = envelope::open_secret(&key, wallet, &hex(secret_hex, "secret")?)?;
+    // Written straight into a wiped buffer: a `serde_json::Value` would keep a plain copy.
     Ok(match (secret, account) {
-        (Secret::Mnemonic(m), None) => serde_json::json!({ "phrase": m.phrase().as_str() }),
-        (Secret::PrivateKey(k), None) => serde_json::json!({ "private_key": k.export_hex().as_str() }),
+        (Secret::Mnemonic(m), None) => secret_json(&Phrase { phrase: &m.phrase() }),
+        (Secret::PrivateKey(k), None) => secret_json(&Key {
+            private_key: &k.export_hex(),
+            solana_private_key: None,
+        }),
         (secret, Some(a)) => {
             let solana = account_solana_key(&secret, a)?.map(|k| {
                 let mut pair = Zeroizing::new([0u8; 64]);
@@ -158,9 +173,9 @@ pub(crate) fn reveal(
                 pair[32..].copy_from_slice(&k.public_key());
                 Zeroizing::new(choice_wallet_core::base58::encode(&pair[..]))
             });
-            serde_json::json!({
-                "private_key": account_key(secret, a)?.export_hex().as_str(),
-                "solana_private_key": solana.as_ref().map(|s| s.as_str()),
+            secret_json(&Key {
+                private_key: &account_key(secret, a)?.export_hex(),
+                solana_private_key: Some(solana.as_ref().map(|s| s.as_str())),
             })
         }
     })

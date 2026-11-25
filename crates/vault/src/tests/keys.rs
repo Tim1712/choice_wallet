@@ -313,3 +313,23 @@ fn a_keystore_from_before_vaults_moves_into_one() {
         "0x9858EfFD232B4033E47d90003D41EC34EcaEda94"
     );
 }
+
+/// A response holding a secret is written once, into a string just big enough: no
+/// reallocation left a copy behind, and the host's copy is the only one (the WASM crate wipes it).
+#[test]
+fn a_response_holding_a_secret_is_written_once() {
+    let (vault, sealed, _) = wallet();
+    for (method, params) in [
+        ("generate_mnemonic", json!({ "words": 24 })),
+        ("unlock", json!({ "vault": vault, "password": PASSWORD })),
+        (
+            "reveal",
+            json!({ "vault": vault, "password": PASSWORD, "secret": sealed, "wallet": "w1", "account": account(0) }),
+        ),
+    ] {
+        let out = handle(&json!({ "method": method, "params": params }).to_string());
+        assert!(out.starts_with(r#"{"ok":true,"result":{"#), "{method}: {out}");
+        assert_eq!(out.capacity(), out.len(), "{method}");
+        let _: Value = serde_json::from_str(&out).unwrap();
+    }
+}
