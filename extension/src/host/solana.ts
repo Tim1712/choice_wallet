@@ -542,6 +542,8 @@ export function createSolana(d: SolanaDeps) {
     /** Control passing to someone else, for the vault's rules (Context.solana_handovers). */
     const handovers: { kind: string; account?: string; mint?: string; to: string; all?: boolean; amount?: string }[] = [];
     let simulation: SiteTransaction["simulation"];
+    /** The simulation ran and succeeded: the handovers above are what it showed. */
+    let simulated = false;
     try {
       const sim = await r.simulateWith(bytesToBase64(wire), ownWritten ? watched : watched.slice(1));
       const after = ownWritten ? sim.after : [before[0] ?? null, ...sim.after];
@@ -626,6 +628,7 @@ export function createSolana(d: SolanaDeps) {
           }
         });
         simulation = { ok: true, changes: [...moved].filter(([, v]) => v !== 0n).map(([denom, v]) => ({ denom, amount: v.toString() })) };
+        simulated = true;
       }
     } catch (e) {
       if (!(e instanceof Unreachable || e instanceof ChainError)) throw e;
@@ -648,6 +651,7 @@ export function createSolana(d: SolanaDeps) {
         symbols: Object.fromEntries(Object.values(tokens).map((t) => [t.denom === SOL ? "native" : (splMint(t.denom) ?? t.denom), t.symbol])),
         solana_token_accounts: accounts,
         solana_handovers: handovers,
+        solana_simulated: simulated,
       },
       checkedBy: new URL(r.pool.current).host,
       signatures,

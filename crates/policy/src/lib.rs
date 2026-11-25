@@ -177,6 +177,11 @@ pub struct Context {
     /// can do this without an instruction that says so.
     #[serde(default)]
     pub solana_handovers: Vec<SolanaHandover>,
+    /// The host simulated a site's Solana transaction and it succeeded, so `solana_handovers`
+    /// is what it showed. Otherwise nothing shows what a program the vault can't read does
+    /// with the account, given its signature.
+    #[serde(default)]
+    pub solana_simulated: bool,
     /// A site's EVM transaction as the user's own node simulated it: every token, NFT and coin
     /// move it would make. `None` when it wasn't simulated. A contract the vault can't read
     /// can move tokens the account approved or deposited there; this is where that shows.

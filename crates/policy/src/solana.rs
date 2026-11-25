@@ -474,6 +474,35 @@ pub fn solana_transaction(r: &Read, signer: &Pubkey, c: &Cctp, ctx: &Context) ->
         }
     }
 
+    // Without a simulation that ran, nothing backs what an instruction the vault can't read
+    // does with the account it is handed, which signs for it: a site can make the simulation
+    // fail (or the RPC can be down) and have it hand anything over.
+    if !ctx.solana_simulated {
+        let mut blind: Vec<Pubkey> = Vec::new();
+        for s in &r.steps {
+            let unread = matches!(
+                s.instruction,
+                Instruction::Other { .. } | Instruction::TokenOther { .. } | Instruction::Unreadable { .. }
+            );
+            if unread && s.accounts.iter().any(|a| a.key == *signer) && !blind.contains(&s.program) {
+                blind.push(s.program);
+            }
+        }
+        if !blind.is_empty() {
+            let names = blind.iter().map(program_name).collect::<Vec<_>>().join(", ");
+            let mut f = finding(
+                "solana_unread_unsimulated",
+                Level::Red,
+                format!(
+                    "It couldn't be simulated, so nothing shows what {names} would do with this account, which it signs for. It could take what's in it."
+                ),
+                json!({ "programs": blind.iter().map(b58).collect::<Vec<_>>() }),
+            );
+            f.confirm = Some("GIVE");
+            out.push(f);
+        }
+    }
+
     for p in &unread {
         let name = program_name(p);
         let id = b58(p);
@@ -1540,5 +1569,37 @@ mod tests {
             r.contains(&"most_of_balance") && !r.contains(&"solana_unread_program"),
             "{r:?}"
         );
+    }
+
+    /// A program the vault can't read, handed the signer, with no simulation that ran behind
+    /// it (failed, or the RPC down): red with GIVE. A simulation that ran, or a program that
+    /// isn't handed the signer, leaves it amber.
+    #[test]
+    fn an_unread_program_given_the_signer_without_a_simulation_is_red() {
+        let step = |accounts: Vec<Pubkey>| {
+            let mut r = tx(&[ME], vec![Instruction::Other { program: [0x42; 32] }]);
+            r.steps[0].program = [0x42; 32];
+            r.steps[0].accounts = accounts
+                .into_iter()
+                .map(|key| Account {
+                    key,
+                    signer: key == ME,
+                    writable: true,
+                    table: None,
+                })
+                .collect();
+            r
+        };
+        let simulated = Context {
+            solana_simulated: true,
+            ..Default::default()
+        };
+        let a = solana_transaction(&step(vec![THEM, ME]), &ME, &MAINNET, &Context::default());
+        assert_eq!((a.level, a.confirm), (Level::Red, Some("GIVE")));
+        assert!(rules_of(&a).contains(&"solana_unread_unsimulated"));
+        let a = solana_transaction(&step(vec![THEM, ME]), &ME, &MAINNET, &simulated);
+        assert_eq!((a.level, a.confirm), (Level::Amber, None));
+        let a = solana_transaction(&step(vec![THEM]), &ME, &MAINNET, &Context::default());
+        assert_eq!((a.level, a.confirm), (Level::Amber, None));
     }
 }

@@ -495,6 +495,37 @@ test("a Solana simulation that hands control away is red, whatever program does 
   }
 });
 
+// A site can make the simulation fail (or the RPC can be down): then nothing shows what a
+// program the vault can't read does with the account it is handed. That is red with GIVE; the
+// same transaction simulated, handing nothing over, is amber.
+test("a Solana transaction that can't be simulated is red when an unread program is handed the account", async () => {
+  const net = chain();
+  const { page, window, service } = await setup(net);
+  const site = page(SITE);
+  const asked = site("solana_connect", {});
+  ok(await service.handle({ type: "dapp_answer", id: (await window()).id, approve: true }));
+  await asked;
+  const program = bs58(new Uint8Array(32).fill(0x42));
+  const keys = [ME_SOL, ME_SOL_USDC, program].map(base58Decode);
+  const message = Uint8Array.from([1, 0, 1, 3, ...keys.flatMap((k) => [...k]), ...new Uint8Array(32).fill(9), 1, 2, 2, 0, 1, 1, 7]);
+  const wire = Uint8Array.from([1, ...new Uint8Array(64), ...message]);
+  net.state.solana.simulateSpend = 5_000n;
+  for (const [err, level, confirm] of [[{ InstructionError: [0, { Custom: 1 }] }, "red", "GIVE"], [null, "amber", undefined]] as const) {
+    net.state.solana.simulateErr = err;
+    const signing = site("solana_signTransaction", { account: ME_SOL, transaction: hexOf(wire) });
+    const w = await window();
+    const review = ok<DappReview>(await service.handle({ type: "dapp_review", id: w.id }));
+    assert.equal(review.risk.level, level, JSON.stringify(review.risk));
+    assert.equal(review.risk.confirm, confirm);
+    assert.equal(
+      review.risk.findings.some((f) => f.rule === "solana_unread_unsimulated"),
+      err !== null,
+    );
+    ok(await service.handle({ type: "dapp_answer", id: w.id, approve: false }));
+    assert.equal(((await signing) as Reply).error?.code, 4001);
+  }
+});
+
 // Run-2 C2: a readable Approve of one unit, then a program that raises the same delegate's
 // allowance to almost the whole balance. The instruction's small figure must not hide what
 // the transaction leaves: the simulated allowance is graded and is the one the window shows.
