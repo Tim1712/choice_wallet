@@ -483,8 +483,8 @@ pub fn evm_transaction(req: &TxRequest, chain: &EvmSide<'_>, ctx: &Context) -> A
 }
 
 /// An amount of an EVM chain's coin (18 decimals on every chain the wallet signs on).
-/// What the node's simulation shows leaving the account. A call that sends the account's
-/// tokens away and brings nothing back is a payment at best; when some go anywhere but the
+/// What the node's simulation shows leaving the account, netted per token. A call that sends
+/// the account's tokens away and brings nothing back is a payment at best; when some go anywhere but the
 /// contract called (another address, or burned), it is how an approval or deposit is drained.
 fn simulated(moves: &[crate::EvmTransfer], req: &TxRequest, ctx: &Context, out: &mut Vec<Finding>) {
     let me = req.from.to_checksum_hex().to_lowercase();
@@ -499,17 +499,35 @@ fn simulated(moves: &[crate::EvmTransfer], req: &TxRequest, ctx: &Context, out: 
             json!({ "moves_read": moves.len() }),
         ));
     }
-    let gone: Vec<&crate::EvmTransfer> = moves.iter().filter(|m| m.from == me && m.to != me).collect();
+    // Each token's moves, netted for the account first: what leaves and comes back in the
+    // same token (the call's own value bounced back, say) is neither a loss nor a return
+    // (review-3). An NFT nets by its ID. An amount that doesn't parse counts as all leaving.
+    let key = |m: &crate::EvmTransfer| (m.token.clone(), m.nft.then(|| m.id.clone()).flatten());
+    let mut net: std::collections::BTreeMap<_, (U256, U256)> = std::collections::BTreeMap::new();
+    for m in moves.iter().filter(|m| (m.from == me) != (m.to == me)) {
+        let e = net.entry(key(m)).or_insert((U256::ZERO, U256::ZERO));
+        let amount = U256::from_dec_str(&m.amount);
+        if m.to == me {
+            e.0 = e.0.checked_add(&amount.unwrap_or(U256::ZERO)).unwrap_or(U256::MAX);
+        } else {
+            e.1 = e.1.checked_add(&amount.unwrap_or(U256::MAX)).unwrap_or(U256::MAX);
+        }
+    }
+    let gone: Vec<&crate::EvmTransfer> = moves
+        .iter()
+        .filter(|m| m.from == me && m.to != me && net.get(&key(m)).is_some_and(|(i, o)| o > i))
+        .collect();
     // Something comes back only when the wallet can value it: the chain's coin or a token it
-    // lists, not an NFT or a token anyone can mint and log a Transfer of (run-4).
+    // lists, not an NFT or a token anyone can mint and log a Transfer of (run-4), and only
+    // when more of it comes in than goes out.
     let back: Vec<&crate::EvmTransfer> = moves
         .iter()
         .filter(|m| {
             m.to == me
                 && m.from != me
                 && !m.nft
-                && m.amount != "0"
                 && (m.token == "native" || ctx.symbols.contains_key(&m.token))
+                && net.get(&key(m)).is_some_and(|(i, o)| i > o)
         })
         .collect();
     if gone.is_empty() {
@@ -1466,7 +1484,9 @@ mod tests {
         assert!(rules_of(&pay).contains(&"simulated_payment"));
         // A listed token comes back (a swap, a withdrawal to the account): a trade the wallet
         // can't weigh, amber, naming where the tokens go.
-        let swap = grade_with(Some(vec![mv(&me, &router), mv(&router, &me)]));
+        let mut coin_back = mv(&router, &me);
+        coin_back.token = "native".into();
+        let swap = grade_with(Some(vec![mv(&me, &router), coin_back]));
         assert_eq!(
             (swap.level, rules_of(&swap).contains(&"simulated_trade")),
             (Level::Amber, true)
@@ -1498,6 +1518,67 @@ mod tests {
                 .iter()
                 .any(|r| r.starts_with("simulated_"))
         );
+    }
+
+    /// Review-3: a drain with the call's own wei bounced back is still a drain. The coin nets
+    /// to nothing, so nothing comes back; and a token that partly comes back still leaves.
+    #[test]
+    fn echoed_wei_doesnt_turn_simulated_loss_into_trade() {
+        let me = format!("0x{}", hex::encode(FROM));
+        let router = format!("0x{}", "6f".repeat(20));
+        let attacker = format!("0x{}", "bb".repeat(20));
+        let usdc = format!("0x{}", "83".repeat(20));
+        let t = |token: &str, from: &str, to: &str, amount: &str| crate::EvmTransfer {
+            token: token.into(),
+            from: from.into(),
+            to: to.into(),
+            amount: amount.into(),
+            nft: false,
+            id: None,
+        };
+        let grade_moves = |moves: Vec<crate::EvmTransfer>, value: u128| {
+            let mut r = req(
+                EthAddress::from_bytes([0x6f; 20]),
+                call(0x3593564cu32.to_be_bytes(), &[[0x60; 32]]),
+            );
+            r.tx.value = U256::from_u128(value);
+            let ctx = Context {
+                origin: Some("https://x.example".into()),
+                origin_known: true,
+                evm_transfers: Some(moves),
+                symbols: [
+                    (usdc.clone(), "USDC".to_owned()),
+                    ("native".to_owned(), "INJ".to_owned()),
+                ]
+                .into(),
+                ..Context::default()
+            };
+            evm_transaction(&r, &EvmSide::injective(&MAINNET), &ctx)
+        };
+        let drain = t(&usdc, &me, &attacker, "5000000000");
+        let alone = grade_moves(vec![drain.clone()], 0);
+        assert_eq!(alone.level, Level::Red);
+        // Same drain; the call carries 1 wei, which the router sends straight back.
+        let echoed = grade_moves(
+            vec![
+                drain.clone(),
+                t("native", &me, &router, "1"),
+                t("native", &router, &me, "1"),
+            ],
+            1,
+        );
+        assert_eq!(echoed.level, Level::Red);
+        assert!(rules_of(&echoed).contains(&"simulated_loss"));
+        assert!(!rules_of(&echoed).contains(&"simulated_trade"));
+        // Some of the same token back: it still nets out of the account.
+        let refunded = grade_moves(vec![drain.clone(), t(&usdc, &router, &me, "1")], 0);
+        assert!(rules_of(&refunded).contains(&"simulated_loss"));
+        // The coin out and a listed token back, more than went out of it: a trade, amber.
+        let swap = grade_moves(vec![t("native", &me, &router, "1"), t(&usdc, &attacker, &me, "1")], 1);
+        assert!(rules_of(&swap).contains(&"simulated_trade"));
+        // Everything that leaves comes back: nothing moved.
+        let round = grade_moves(vec![t(&usdc, &me, &router, "5"), t(&usdc, &router, &me, "5")], 0);
+        assert!(!rules_of(&round).iter().any(|r| r.starts_with("simulated_")));
     }
 
     #[test]
