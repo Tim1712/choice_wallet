@@ -604,13 +604,12 @@ fn system(accounts: &[Account], d: &[u8]) -> Option<Instruction> {
                 space: u64_at(d, 4)?,
             }
         }
-        4 => {
-            len(4)?;
-            Instruction::AdvanceNonce {
-                nonce: acct(0)?,
-                authority: acct(2)?,
-            }
-        }
+        // AdvanceNonceAccount has no fields: bytes after its kind change nothing, and the
+        // runtime takes it for a durable nonce with them, so it is read with them.
+        4 => Instruction::AdvanceNonce {
+            nonce: acct(0)?,
+            authority: acct(2)?,
+        },
         // AssignWithSeed: the account (derived from a signing base) to a program. Data: base,
         // a length-prefixed seed (u64 length), then the owner last.
         10 => {

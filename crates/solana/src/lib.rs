@@ -302,4 +302,31 @@ mod tests {
         }
         assert!(read(&out, &[]).is_err());
     }
+
+    /// A durable nonce's advance with bytes after its kind: the runtime still takes the
+    /// message for a durable nonce one (it reads only the first four), and so does the vault.
+    #[test]
+    fn a_durable_nonce_with_trailing_bytes() {
+        let (me, nonce, sysvar) = ([1u8; 32], [2u8; 32], [3u8; 32]);
+        let advance = |data: &[u8]| {
+            let mut m = vec![1u8, 0, 2, 4];
+            for k in [me, nonce, sysvar, program::SYSTEM.key()] {
+                m.extend_from_slice(&k);
+            }
+            m.extend_from_slice(&[0x11; 32]);
+            m.extend_from_slice(&[1, 3, 3, 1, 2, 0]);
+            m.push(data.len() as u8);
+            m.extend_from_slice(data);
+            read(&m, &[]).unwrap()
+        };
+        for data in [&[4u8, 0, 0, 0][..], &[4, 0, 0, 0, 9, 9]] {
+            let r = advance(data);
+            assert!(r.durable_nonce, "{data:?}");
+            assert_eq!(
+                r.steps[0].instruction,
+                Instruction::AdvanceNonce { nonce, authority: me }
+            );
+        }
+        assert!(!advance(&[4, 0, 0]).durable_nonce);
+    }
 }

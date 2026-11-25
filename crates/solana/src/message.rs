@@ -326,12 +326,12 @@ impl Message {
     }
 
     /// Whether the message leads with `AdvanceNonceAccount`: it then never expires, but waits
-    /// valid until its nonce is used.
+    /// valid until its nonce is used. The runtime looks only at the first four bytes of its
+    /// data (and the System program ignores bytes after them), so neither does this.
     pub fn durable_nonce(&self) -> bool {
         self.instructions.first().is_some_and(|ix| {
             self.keys[usize::from(ix.program)] == crate::program::SYSTEM.key()
-                && ix.data.len() == 4
-                && ix.data[..4] == 4u32.to_le_bytes()
+                && ix.data.get(..4) == Some(&4u32.to_le_bytes()[..])
         })
     }
 }
