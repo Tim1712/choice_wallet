@@ -48,6 +48,11 @@ test("an allowance is red when it can take all there is, amber when capped below
   assert.equal(allowanceLevel("1", undefined), "red");
   // Capped below what the account holds.
   assert.equal(allowanceLevel("99", "100"), "amber");
+  // What the endpoint answered isn't a whole number: red, never a throw.
+  for (const bad of ["", "1.5", "-1", "0x10", "abc", "1e30"]) {
+    assert.equal(allowanceLevel(bad, "100"), "red", bad);
+    assert.equal(allowanceLevel("1", bad), "red", bad);
+  }
 
   assert.equal(feeAllowanceLevel([], "inj", "5"), "red", "no limit");
   assert.equal(feeAllowanceLevel([{ denom: "inj", amount: "5" }], "inj", "5"), "red");
