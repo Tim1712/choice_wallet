@@ -16,6 +16,10 @@ import { callVault } from "./host/vault";
 import { MAX_REQUEST } from "./limits";
 import { notifyConnected } from "./notify";
 
+/** Set by build.mjs: true only in a build for testing sites on this machine (`--local-sites`,
+ *  `--dev`), whose manifest also runs the content scripts on http://localhost and 127.0.0.1. */
+declare const LOCAL_SITES: boolean;
+
 // Content scripts never read the wallet's storage (the vault, sealed secrets, grants,
 // endpoints): only the extension's own pages and this worker.
 void chrome.storage.local.setAccessLevel({ accessLevel: chrome.storage.AccessLevel.TRUSTED_CONTEXTS }).catch(() => {});
@@ -178,7 +182,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     );
     return true; // respond asynchronously
   }
-  const origin = dappOrigin(sender, chrome.runtime.id);
+  const origin = dappOrigin(sender, chrome.runtime.id, LOCAL_SITES);
   if (!origin) return false;
   if (JSON.stringify(message ?? null).length > MAX_REQUEST) {
     sendResponse({ error: { code: -32602, message: "Request too large." } });

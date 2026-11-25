@@ -32,9 +32,7 @@
   "content_scripts": [
     {
       "matches": [
-        "https://*/*",
-        "http://localhost/*",
-        "http://127.0.0.1/*"
+        "https://*/*"
       ],
       "js": [
         "inpage.js"
@@ -44,9 +42,7 @@
     },
     {
       "matches": [
-        "https://*/*",
-        "http://localhost/*",
-        "http://127.0.0.1/*"
+        "https://*/*"
       ],
       "js": [
         "relay.js"

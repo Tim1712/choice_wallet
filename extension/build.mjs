@@ -4,6 +4,9 @@
 //   node build.mjs           build dist/ (load it unpacked in Chrome)
 //   node build.mjs --test    also build dist-test/, which `node --test` runs
 //   node build.mjs --dev     build dist-dev/ and keep rebuilding on every change (see below)
+//   node build.mjs --local-sites   build dist/ that also answers sites on http://localhost and
+//                            http://127.0.0.1 (the e2e checks' test sites); dev builds do too.
+//                            Release builds (release.mjs) never do: https sites only.
 //
 // Needs cargo and wasm-bindgen exactly 0.2.130, the crate's version. Set WASM_BINDGEN to
 // its path if it isn't on PATH.
@@ -29,6 +32,7 @@ const WASM_BINDGEN_VERSION = "0.2.130";
 const wasmBindgen = process.env.WASM_BINDGEN ?? "wasm-bindgen";
 const withTests = process.argv.includes("--test");
 const dev = process.argv.includes("--dev");
+const localSites = dev || process.argv.includes("--local-sites");
 const glue = join(here, "build/vault");
 const dist = join(here, dev ? "dist-dev" : "dist");
 
@@ -76,11 +80,19 @@ function copyStatic() {
   cpSync(join(here, "public"), dist, { recursive: true });
   mkdirSync(join(dist, "vault"), { recursive: true });
   cpSync(join(glue, "choice_wallet_wasm_bg.wasm"), join(dist, "vault/choice_wallet_wasm_bg.wasm"));
-  if (dev) {
+  if (dev || localSites) {
     const manifest = JSON.parse(readFileSync(join(here, "public/manifest.json"), "utf8"));
-    manifest.name = `${manifest.name} (dev)`;
-    manifest.action.default_title = `${manifest.action.default_title} (dev)`;
+    if (dev) {
+      manifest.name = `${manifest.name} (dev)`;
+      manifest.action.default_title = `${manifest.action.default_title} (dev)`;
+    }
+    if (localSites) {
+      manifest.version_name = `${manifest.version} local sites`;
+      for (const c of manifest.content_scripts) c.matches.push("http://localhost/*", "http://127.0.0.1/*");
+    }
     writeFileSync(join(dist, "manifest.json"), JSON.stringify(manifest, null, 2) + "\n");
+  }
+  if (dev) {
     const page = readFileSync(join(here, "public/popup.html"), "utf8");
     writeFileSync(join(dist, "popup.html"), page.replace("</body>", '  <script type="module" src="dev.js"></script>\n  </body>'));
   }
@@ -96,7 +108,7 @@ const common = {
   // The UI's font and images ship inside the extension; nothing is fetched at runtime.
   loader: { ".woff2": "file", ".png": "file", ".svg": "file" },
   assetNames: "assets/[name]-[hash]",
-  define: { "process.env.NODE_ENV": dev ? '"development"' : '"production"' },
+  define: { "process.env.NODE_ENV": dev ? '"development"' : '"production"', LOCAL_SITES: String(localSites) },
   legalComments: "eof",
   logLevel: "warning",
 };

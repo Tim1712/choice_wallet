@@ -876,9 +876,10 @@ export function createService(d: Deps) {
 }
 
 /** The origin of a web page talking through this extension's content script, if it may:
- *  the top frame of a tab, https (or plain http on this machine, for development). The
- *  origin is the browser's, never the page's say. */
-export function dappOrigin(sender: { id?: string; origin?: string; url?: string; tab?: unknown; frameId?: number }, extensionId: string): string | null {
+ *  the top frame of a tab, https. Plain http on this machine only with `localSites`, which
+ *  only a build for testing sites (`build.mjs --local-sites`, or `--dev`) sets. The origin
+ *  is the browser's, never the page's say. */
+export function dappOrigin(sender: { id?: string; origin?: string; url?: string; tab?: unknown; frameId?: number }, extensionId: string, localSites = false): string | null {
   if (sender.id !== extensionId || !sender.tab || sender.frameId !== 0 || typeof sender.origin !== "string") return null;
   let u: URL;
   try {
@@ -886,7 +887,7 @@ export function dappOrigin(sender: { id?: string; origin?: string; url?: string;
   } catch {
     return null;
   }
-  const local = u.protocol === "http:" && (u.hostname === "localhost" || u.hostname === "127.0.0.1");
+  const local = localSites && u.protocol === "http:" && (u.hostname === "localhost" || u.hostname === "127.0.0.1");
   if ((u.protocol !== "https:" && !local) || u.origin !== sender.origin) return null;
   if (!(sender.url ?? "").startsWith(`${sender.origin}/`)) return null;
   return sender.origin;
