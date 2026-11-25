@@ -35,6 +35,8 @@ const MAX_REVIEW_TOKENS = 64;
 
 export function createDapps(h: DappHost) {
   const waiting = new Map<string, Waiting>();
+  /** Times every request was rejected at once (a lock, a reset). */
+  let rejections = 0;
 
   async function grants(): Promise<Grants> {
     const { connections } = (await h.local.get(["connections"])) as { connections?: Grants };
@@ -156,8 +158,13 @@ export function createDapps(h: DappHost) {
     finish: NonNullable<Waiting["finish"]>,
     named?: Named,
   ): Promise<DappReply> {
+    // The handler checked the wallet was unlocked, then awaited: a lock since then rejected
+    // what was waiting before this joined it. Read the count before the last check, and queue
+    // only if no lock came after it (nothing is awaited between that test and the queueing).
+    const at = rejections;
     if (!(await isConnected(origin))) return no(UNAUTHORIZED, "Connect to Choice Wallet first.");
     if (named && !named.address) return no(UNAUTHORIZED, "Name the account to sign with.");
+    if (!(await h.unlocked()) || rejections !== at) return no(UNAUTHORIZED, "Choice Wallet is locked, or this account can't sign. Unlock it, then ask again.");
     // The network the handler read and built the request for: a second read here could name
     // another one, and review checks only this against the wallet's network.
     return ask({ build, finish, ...(named ? { named } : {}) }, { origin, network, kind: "sign", method });
@@ -454,6 +461,7 @@ export function createDapps(h: DappHost) {
   /** The wallet locked or was reset: every request still waiting is rejected, so none is
    *  answered later by an account the user didn't review it for. */
   function rejectAll(message: string) {
+    rejections++;
     for (const w of [...waiting.values()]) settle(w.req.id, no(USER_REJECTED, message), false);
   }
 
