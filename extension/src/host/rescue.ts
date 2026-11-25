@@ -199,7 +199,9 @@ export function createRescue(d: RescueDeps) {
           return [...fit, ...(send.length ? [{ type: "bank_send", to, amount: send }] : [])];
         },
       });
-      return review.ok ? { ok: true, result: { ...review.result, rescue: { to, rest } } } : review;
+      // A grant naming no message type the wallet can tell can't be revoked: said, not skipped silently.
+      const unrevocable = grants.filter((g) => !g.msgTypeUrl).length;
+      return review.ok ? { ok: true, result: { ...review.result, rescue: { to, rest, ...(unrevocable ? { unrevocable } : {}) } } } : review;
     } catch (e) {
       return d.sender.chainFailure(e);
     }

@@ -3,8 +3,10 @@
 //
 // A revoke names the message type a grant covers. A generic grant says it; typed ones
 // imply it (a send grant covers MsgSend, Injective's `…Authz` orderbook grants the matching
-// `Msg…`, from injective-core v1.20's MsgTypeURL methods). A grant whose type the wallet
-// can't tell still shows, with no revoke.
+// `Msg…`, from injective-core v1.20's MsgTypeURL methods). An authorization the wallet
+// doesn't know is revoked by its own `msg` field when that is a type URL, as
+// GenericAuthorization's is (Injective's GenericExchangeAuthorization has one too). A grant
+// whose type the wallet can't tell even so still shows, with no revoke.
 
 import type { Coin } from "./lcd.ts";
 import { Down, isObject } from "./pool.ts";
@@ -16,6 +18,9 @@ export interface AuthzGrant {
   /** The message type the grant covers, which a revoke names; null when the wallet can't
    *  tell. */
   msgTypeUrl: string | null;
+  /** An authorization type the wallet doesn't read: `msgTypeUrl`, if any, is its own `msg`
+   *  field, and its terms are unread. */
+  unread?: true;
   /** A send grant's limit (empty: none given). */
   spendLimit?: Coin[];
   /** A send grant's allowed recipients (empty: anyone). */
@@ -64,18 +69,28 @@ const FIXED: Record<string, string> = {
 const EXCHANGE_AUTHZ =
   /^\/injective\.exchange\.(v1beta1|v2)\.(CreateSpotLimitOrder|CreateSpotMarketOrder|BatchCreateSpotLimitOrders|CancelSpotOrder|BatchCancelSpotOrders|CreateDerivativeLimitOrder|CreateDerivativeMarketOrder|BatchCreateDerivativeLimitOrders|CancelDerivativeOrder|BatchCancelDerivativeOrders|BatchUpdateOrders)Authz$/;
 
+/** An authorization's own `msg` field, when it is a type URL. */
+function ownMsg(auth: Record<string, unknown>): string | null {
+  const msg = auth["msg"];
+  return typeof msg === "string" && TYPE_URL.test(msg) ? msg : null;
+}
+
+/** Whether the wallet reads this authorization type (knows the message it covers). */
+function known(type: string): boolean {
+  return type === "/cosmos.authz.v1beta1.GenericAuthorization" || type === "/cosmos.staking.v1beta1.StakeAuthorization" || type in FIXED || EXCHANGE_AUTHZ.test(type);
+}
+
 /** The message type an authorization covers, or null if the wallet can't tell. */
 export function grantedMsg(auth: Record<string, unknown>): string | null {
   const type = String(auth["@type"] ?? "");
-  if (type === "/cosmos.authz.v1beta1.GenericAuthorization") {
-    const msg = auth["msg"];
-    return typeof msg === "string" && TYPE_URL.test(msg) ? msg : null;
-  }
+  if (type === "/cosmos.authz.v1beta1.GenericAuthorization") return ownMsg(auth);
   if (type === "/cosmos.staking.v1beta1.StakeAuthorization") return STAKE_TYPES[String(auth["authorization_type"])] ?? null;
   const fixed = FIXED[type];
   if (fixed) return fixed;
   const ex = EXCHANGE_AUTHZ.exec(type);
-  return ex ? `/injective.exchange.${ex[1]}.Msg${ex[2]}` : null;
+  if (ex) return `/injective.exchange.${ex[1]}.Msg${ex[2]}`;
+  // One the wallet doesn't know: the message type it names itself, if it does.
+  return ownMsg(auth);
 }
 
 function coins(v: unknown): Coin[] {
@@ -110,6 +125,7 @@ export function parseAuthzGrants(body: unknown, granter: string): AuthzGrant[] {
       msgTypeUrl: grantedMsg(auth),
       expiration: time(g["expiration"]),
     };
+    if (!known(out.type)) out.unread = true;
     if (out.type === "/cosmos.bank.v1beta1.SendAuthorization") {
       out.spendLimit = coins(auth["spend_limit"]);
       out.allowList = Array.isArray(auth["allow_list"]) ? auth["allow_list"].map(account) : [];

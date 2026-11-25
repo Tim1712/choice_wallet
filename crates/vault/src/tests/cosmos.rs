@@ -414,7 +414,22 @@ fn own_revokes_build_decode_and_sign() {
         assert_eq!(d["risk"]["level"], "info", "{mode}");
         assert!(approve_and_sign(&request, account(0))["tx_raw"].is_string(), "{mode}");
     }
+    // A grant of an authorization type the wallet doesn't read is revoked by the message type
+    // it names (Injective's GenericExchangeAuthorization, say): any well-formed type URL builds,
+    // reads back as that revoke and signs, graded Info like the others.
+    let order = "/injective.exchange.v2.MsgCreateSpotLimitOrder";
+    let messages = json!([{ "type": "authz_revoke", "grantee": them, "msg_type_url": order }]);
+    for mode in ["direct", "amino_json"] {
+        let request = build_staking(messages.clone(), mode).unwrap()["request"].clone();
+        let d = ok("decode", json!({ "request": request }));
+        assert_eq!(d["display"]["messages"][0]["type"], "authz_revoke", "{mode}");
+        assert_eq!(d["display"]["messages"][0]["msg_type_url"], order, "{mode}");
+        assert_eq!(d["risk"]["findings"][0]["rule"], "authz_revoke", "{mode}");
+        assert_eq!(d["risk"]["level"], "info", "{mode}");
+        assert!(approve_and_sign(&request, account(0))["tx_raw"].is_string(), "{mode}");
+    }
     for bad in [
+        json!([{ "type": "authz_revoke", "grantee": them, "msg_type_url": format!("/{}", "a".repeat(128)) }]),
         json!([{ "type": "authz_revoke", "grantee": them, "msg_type_url": "cosmos.bank.v1beta1.MsgSend" }]),
         json!([{ "type": "authz_revoke", "grantee": them, "msg_type_url": "/a b" }]),
         json!([{ "type": "reset_withdraw_address", "to": them }]),

@@ -24,6 +24,15 @@ test("the message type a grant covers, which a revoke names", () => {
     [{ "@type": "/injective.exchange.v2.BatchUpdateOrdersAuthz" }, "/injective.exchange.v2.MsgBatchUpdateOrders"],
     [{ "@type": "/injective.exchange.v2.SomethingElseAuthz" }, null],
     [{ "@type": "/example.v1.MadeUpAuthorization" }, null],
+    // One the wallet doesn't know that names its message type, as Injective's
+    // GenericExchangeAuthorization does: revoked by that name.
+    [{ "@type": "/injective.exchange.v2.GenericExchangeAuthorization", msg: "/injective.exchange.v2.MsgCreateSpotLimitOrder", spend_limit: [] }, "/injective.exchange.v2.MsgCreateSpotLimitOrder"],
+    [{ "@type": "/example.v1.MadeUpAuthorization", msg: "/example.v1.MsgAnything" }, "/example.v1.MsgAnything"],
+    [{ "@type": "/example.v1.MadeUpAuthorization", msg: "not a type" }, null],
+    [{ "@type": "/example.v1.MadeUpAuthorization", msg: `/${"a".repeat(128)}` }, null],
+    // A known type's terms decide, never a stray `msg` field.
+    [{ "@type": "/cosmos.staking.v1beta1.StakeAuthorization", authorization_type: "AUTHORIZATION_TYPE_UNSPECIFIED", msg: "/cosmos.bank.v1beta1.MsgSend" }, null],
+    [{ "@type": "/cosmos.bank.v1beta1.SendAuthorization", msg: "/cosmos.gov.v1.MsgVote" }, "/cosmos.bank.v1beta1.MsgSend"],
   ];
   for (const [auth, want] of cases) assert.equal(grantedMsg(auth), want, JSON.stringify(auth));
 });
@@ -54,6 +63,11 @@ test("authz grants: this granter's only, send limits kept, unreadable types stil
     ],
   );
   assert.deepEqual(grants[1]!.spendLimit, [{ denom: "inj", amount: "5" }]);
+  // Only the type the wallet doesn't read is marked so.
+  assert.deepEqual(
+    grants.map((g) => g.unread ?? false),
+    [false, false, true],
+  );
   assert.throws(() => parseAuthzGrants({ grants: [{ granter: THEM, grantee: ME, authorization: {} }] }, ME), /another account/);
   assert.throws(() => parseAuthzGrants({ grants: [{ granter: ME, grantee: "nobody", authorization: {} }] }, ME), Down);
 });

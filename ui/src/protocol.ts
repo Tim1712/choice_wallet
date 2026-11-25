@@ -474,8 +474,9 @@ export type SendReview = {
   /** An NFT send: which NFT, as the host checked it is held (the vault's decode says
    *  where it goes). */
   nft?: { collection: string; tokenId: string; standard: NftStandard };
-  /** A rescue: where everything goes, and how many messages didn't fit (run it again). */
-  rescue?: { to: string; rest: number };
+  /** A rescue: where everything goes, and how many messages didn't fit (run it again).
+   *  `unrevocable`: grants that name no message type the wallet can tell, so stay. */
+  rescue?: { to: string; rest: number; unrevocable?: number };
   /** One step of a bridge transfer: where it goes, as the quote said (the vault's reading in
    *  `display` is held to it). */
   bridge?: BridgeStepInfo;
@@ -683,8 +684,9 @@ export type StakeRequest =
 export type ApprovalsSummary = {
   network: NetworkId;
   /** authz grants it gave. `msgTypeUrl` is what a revoke names; null when the wallet can't
-   *  tell (shown, not revocable here). */
-  grants: { grantee: string; type: string; msgTypeUrl: string | null; spendLimit?: Coin[]; allowList?: string[]; expiration: string | null }[];
+   *  tell (shown, not revocable here). `unread`: an authorization type the wallet doesn't
+   *  read, its `msgTypeUrl` (if any) the message type it names itself. */
+  grants: { grantee: string; type: string; msgTypeUrl: string | null; unread?: true; spendLimit?: Coin[]; allowList?: string[]; expiration: string | null }[];
   /** Fee allowances it gave; an empty limit is none. */
   feeGrants: { grantee: string; type: string; spendLimit: Coin[]; expiration: string | null; allowedMessages?: string[] }[];
   /** Where staking rewards go, when it isn't this account. */

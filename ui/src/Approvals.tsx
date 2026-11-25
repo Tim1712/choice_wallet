@@ -141,10 +141,13 @@ export function ApprovalsView({ canSign, onReview, onBack }: { canSign: boolean;
             {s.grants.map((g, i) => (
               <div key={`g${i}`} className="token approval-row">
                 <span className="name">
-                  <span className={canMoveFunds(g.msgTypeUrl) ? "symbol danger-text" : "symbol"}>{g.msgTypeUrl ? permissionName(g.msgTypeUrl) : "A permission the wallet can't read"}</span>
+                  {/* An authorization the wallet doesn't read is red whatever it names. */}
+                  <span className={g.unread || canMoveFunds(g.msgTypeUrl) ? "symbol danger-text" : "symbol"}>{g.msgTypeUrl ? permissionName(g.msgTypeUrl) : "A permission the wallet can't read"}</span>
                   <span className="sub">
                     {shortAddress(g.grantee)} · {g.spendLimit?.length ? `up to ${coins(g.spendLimit)}, ` : ""}
                     {until(g.expiration)}
+                    {g.unread && g.msgTypeUrl ? " · its terms unread" : ""}
+                    {g.msgTypeUrl ? "" : " · the wallet can't revoke it: it doesn't name a message type"}
                   </span>
                 </span>
                 {g.msgTypeUrl ? pill(`Revoke ${permissionName(g.msgTypeUrl)} for ${g.grantee}`, () => void revoke([{ type: "authz", grantee: g.grantee, msg_type_url: g.msgTypeUrl! }])) : null}

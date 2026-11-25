@@ -420,6 +420,7 @@ export function Review({
       {review.rescue && (
         <Callout level="amber">
           Everything below goes to your rescue address.{review.rescue.rest > 0 ? ` ${review.rescue.rest} more ${review.rescue.rest === 1 ? "message didn't" : "messages didn't"} fit: rescue again after this one.` : ""}
+          {review.rescue.unrevocable ? ` ${review.rescue.unrevocable === 1 ? "A permission the wallet can't read stays" : `${review.rescue.unrevocable} permissions the wallet can't read stay`}: it can't revoke ${review.rescue.unrevocable === 1 ? "it" : "them"}.` : ""}
         </Callout>
       )}
       {/* What the risk rules found comes first: it must never sit below the fold. */}
