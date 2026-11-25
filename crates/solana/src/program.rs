@@ -366,12 +366,14 @@ pub enum Instruction {
         event_account: Pubkey,
     },
     /// Changes who manages (`kind` 0, the staker) or withdraws from (`kind` 1, the
-    /// withdrawer) a stake account: Stake's `Authorize` and `AuthorizeChecked`.
+    /// withdrawer) a stake account: Stake's `Authorize` and `AuthorizeChecked`. The Stake
+    /// program accepts the current staker or withdrawer from any of the instruction's signing
+    /// accounts (the authority's slot is never read), so those are kept.
     StakeAuthorize {
         /// The stake account.
         stake: Pubkey,
-        /// Its current staker or withdrawer; signs.
-        authority: Pubkey,
+        /// The instruction's signing accounts: one is the current staker or withdrawer.
+        signers: Vec<Pubkey>,
         /// Who it becomes.
         new_authority: Pubkey,
         /// 0 staker, 1 withdrawer.
@@ -495,23 +497,22 @@ fn stake(accounts: &[Account], data: &[u8]) -> Instruction {
         reason,
     };
     match u32_at(data, 0) {
-        // Authorize(new authority, kind): [stake, clock, authority, (custodian)].
+        // Authorize(new authority, kind): [stake, clock, authority, (custodian)]. The program
+        // checks the current authority against every signing account, wherever it is.
         Some(1) => match (data.len(), acct(0), acct(2), key_at(data, 4), u32_at(data, 36)) {
-            (40, Some(stake), Some(authority), Some(new_authority), Some(kind @ 0..=1)) => {
-                Instruction::StakeAuthorize {
-                    stake,
-                    authority,
-                    new_authority,
-                    kind,
-                }
-            }
+            (40, Some(stake), Some(_), Some(new_authority), Some(kind @ 0..=1)) => Instruction::StakeAuthorize {
+                stake,
+                signers: signers(accounts),
+                new_authority,
+                kind,
+            },
             _ => unreadable("a Stake Authorize that isn't laid out as one"),
         },
         // AuthorizeChecked(kind): [stake, clock, authority, new authority (signs), (custodian)].
         Some(10) => match (data.len(), acct(0), acct(2), acct(3), u32_at(data, 4)) {
-            (8, Some(stake), Some(authority), Some(new_authority), Some(kind @ 0..=1)) => Instruction::StakeAuthorize {
+            (8, Some(stake), Some(_), Some(new_authority), Some(kind @ 0..=1)) => Instruction::StakeAuthorize {
                 stake,
-                authority,
+                signers: signers(accounts),
                 new_authority,
                 kind,
             },
@@ -798,12 +799,16 @@ mod tests {
         let mut authorize = 1u32.to_le_bytes().to_vec();
         authorize.extend_from_slice(&them);
         authorize.extend_from_slice(&1u32.to_le_bytes());
-        let accts = [acct(stake), acct(clock), acct(me)];
+        let signer = |key: [u8; 32]| Account {
+            signer: true,
+            ..acct(key)
+        };
+        let accts = [acct(stake), acct(clock), signer(me)];
         assert_eq!(
             read(&STAKE.key(), &accts, &authorize),
             Instruction::StakeAuthorize {
                 stake,
-                authority: me,
+                signers: vec![me],
                 new_authority: them,
                 kind: 1
             }
@@ -813,12 +818,12 @@ mod tests {
         assert_eq!(
             read(
                 &STAKE.key(),
-                &[acct(stake), acct(clock), acct(me), acct(them)],
+                &[acct(stake), acct(clock), signer(me), signer(them)],
                 &checked
             ),
             Instruction::StakeAuthorize {
                 stake,
-                authority: me,
+                signers: vec![me, them],
                 new_authority: them,
                 kind: 0
             }
@@ -838,6 +843,11 @@ mod tests {
                 lamports: 100_000_000_000
             }
         );
+        // The signer anywhere, as the custodian's slot: one of the signers all the same.
+        assert!(matches!(
+            read(&STAKE.key(), &[acct(stake), acct(clock), acct(them), signer(me)], &authorize),
+            Instruction::StakeAuthorize { signers, .. } if signers == vec![me]
+        ));
         // A trailing byte, a third kind, or a missing account: unreadable, never guessed.
         let mut longer = authorize.clone();
         longer.push(0);

@@ -213,11 +213,11 @@ fn solana_step(cluster: &SolanaChain, r: &choice_wallet_solana::Read, s: &choice
         }
         I::StakeAuthorize {
             stake,
-            authority,
+            signers,
             new_authority,
             kind,
         } => json!({
-            "type": "stake_authorize", "stake": b58(stake), "authority": b58(authority),
+            "type": "stake_authorize", "stake": b58(stake), "signers": signers.iter().map(b58).collect::<Vec<_>>(),
             "new_authority": b58(new_authority), "authority_kind": if *kind == 1 { "withdrawer" } else { "staker" },
         }),
         I::StakeWithdraw {

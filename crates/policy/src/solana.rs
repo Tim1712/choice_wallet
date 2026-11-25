@@ -379,13 +379,15 @@ pub fn solana_transaction(r: &Read, signer: &Pubkey, c: &Cctp, ctx: &Context) ->
                     ));
                 }
             }
+            // The program takes the current authority from any signing account of the
+            // instruction: the signer among them may be it.
             Instruction::StakeAuthorize {
                 stake,
-                authority,
+                signers,
                 new_authority,
                 kind,
             } => {
-                if authority != signer || new_authority == signer {
+                if !signers.contains(signer) || new_authority == signer {
                     continue;
                 }
                 out.push(stake_handover(
@@ -1052,7 +1054,7 @@ mod tests {
         };
         let authorize = |kind, to| Instruction::StakeAuthorize {
             stake,
-            authority: ME,
+            signers: vec![ME],
             new_authority: to,
             kind,
         };
@@ -1350,5 +1352,64 @@ mod tests {
         let mut nonce = r.clone();
         nonce.durable_nonce = true;
         assert!(rules(&nonce, &MAINNET, &Context::default()).contains(&"solana_durable_nonce"));
+    }
+
+    /// REVIEW: Stake's Authorize takes the current authority from any signing account of the
+    /// instruction (the program collects every signer; account 2 is unused). The signer put
+    /// at index 3 (the custodian's slot) with anything at index 2 hands its withdrawer over,
+    /// and the instruction alone raises nothing.
+    #[test]
+    fn review_stake_authorize_with_signer_out_of_place() {
+        use choice_wallet_solana::program::STAKE;
+        let stake_acct = [7u8; 32];
+        let clock = base58::decode32("SysvarC1ock11111111111111111111111111111111").unwrap();
+        let dummy = [9u8; 32];
+        let mut m = vec![1u8, 0, 3, 5];
+        for k in [ME, stake_acct, clock, dummy, STAKE.key()] {
+            m.extend_from_slice(&k);
+        }
+        m.extend_from_slice(&[0x11; 32]); // blockhash
+        m.push(1); // one instruction
+        m.push(4); // Stake
+        m.extend_from_slice(&[4, 1, 2, 3, 0]); // [stake, clock, dummy, ME]
+        let mut data = 1u32.to_le_bytes().to_vec();
+        data.extend_from_slice(&THEM);
+        data.extend_from_slice(&1u32.to_le_bytes()); // withdrawer
+        m.push(data.len() as u8);
+        m.extend_from_slice(&data);
+        let r = choice_wallet_solana::read(&m, &[]).unwrap();
+        let a = solana_transaction(&r, &ME, &MAINNET, &Context::default());
+        eprintln!("level {:?} confirm {:?} rules {:?}", a.level, a.confirm, rules_of(&a));
+        assert_eq!(
+            a.level,
+            Level::Red,
+            "withdrawer handed to THEM, rules {:?}",
+            rules_of(&a)
+        );
+    }
+
+    /// REVIEW: AuthorizeChecked likewise: [stake, clock, anything, new authority (signs), ME (signs)].
+    #[test]
+    fn review_stake_authorize_checked_with_signer_out_of_place() {
+        use choice_wallet_solana::program::STAKE;
+        let stake_acct = [7u8; 32];
+        let clock = base58::decode32("SysvarC1ock11111111111111111111111111111111").unwrap();
+        let dummy = [9u8; 32];
+        let mut m = vec![2u8, 1, 3, 6];
+        for k in [ME, THEM, stake_acct, clock, dummy, STAKE.key()] {
+            m.extend_from_slice(&k);
+        }
+        m.extend_from_slice(&[0x11; 32]);
+        m.push(1);
+        m.push(5);
+        m.extend_from_slice(&[5, 2, 3, 4, 1, 0]);
+        let mut data = 10u32.to_le_bytes().to_vec();
+        data.extend_from_slice(&1u32.to_le_bytes());
+        m.push(data.len() as u8);
+        m.extend_from_slice(&data);
+        let r = choice_wallet_solana::read(&m, &[]).unwrap();
+        let a = solana_transaction(&r, &ME, &MAINNET, &Context::default());
+        eprintln!("level {:?} confirm {:?} rules {:?}", a.level, a.confirm, rules_of(&a));
+        assert_eq!(a.level, Level::Red);
     }
 }
