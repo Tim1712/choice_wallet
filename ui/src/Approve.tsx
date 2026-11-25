@@ -61,10 +61,12 @@ const browser: ArmEnv = {
     };
   },
   enters(f) {
-    // The main button is marked `data-arm`; a mouse coming onto it (or into it) from outside.
+    // The main button is marked `data-arm`; a mouse coming onto it (or into it) from another
+    // part of this window. Not from nowhere (`relatedTarget` null): that is also the first
+    // move of a pointer the window opened under, still where a page's click stream put it.
     const inside = (t: EventTarget | null) => t instanceof Element && t.closest("[data-arm]") !== null;
     const over = (e: PointerEvent) => {
-      if (e.pointerType === "mouse" && inside(e.target) && !inside(e.relatedTarget)) f();
+      if (e.pointerType === "mouse" && inside(e.target) && e.relatedTarget instanceof Element && !inside(e.relatedTarget)) f();
     };
     window.addEventListener("pointerover", over, true);
     return () => window.removeEventListener("pointerover", over, true);
