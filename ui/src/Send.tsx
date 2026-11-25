@@ -617,7 +617,7 @@ export function Review({
         <div className="row">
           <span>Network</span>
           <span>
-            {review.display.kind === "solana_transaction" ? NETWORKS[network].solana.name : source ? source.name : network === "testnet" ? "Injective testnet" : "Injective"}
+            {review.display.kind === "solana_transaction" ? NETWORKS[network].solana.name : source ? networkName(review.display as unknown as Record<string, unknown>, network) : network === "testnet" ? "Injective testnet" : "Injective"}
             {view.evm && !source ? " (EVM)" : ""}
           </span>
         </div>
@@ -924,4 +924,30 @@ export function SentView({
       </div>
     </Screen>
   );
+}
+
+/** The chain a request is signed for: an EVM chain by its name (Injective's EVM side marked
+ *  so; an added one with its ID, said to be added), Solana's cluster, or Injective. */
+export function networkName(d: Record<string, unknown>, network: NetworkId): string {
+  const net = NETWORKS[network];
+  const kind = d["kind"];
+  if (kind === "solana_transaction" || kind === "solana_message") return net.solana.name;
+  const chain = typeof d["chain"] === "string" ? d["chain"] : "";
+  // Injective's EIP-712 domain is an Injective transaction, whichever EVM chain the site
+  // asked on: it takes effect on Injective (run-2 C16).
+  if (kind === "evm_typed_data" && typeof d["injective_tx"] === "object" && d["injective_tx"] !== null) {
+    const via = chainByCaip2(network, chain);
+    if (via?.kind !== "evm") return net.name;
+    // An added chain is named by the user or a site: its ID goes with the name.
+    return `${net.name} (asked on ${via.added ? `${via.name}, added chain ${via.chainId}` : via.name})`;
+  }
+  if (chain.startsWith("eip155:")) {
+    const c = chainByCaip2(network, chain);
+    // An added chain is named by the user (or a site), so its ID goes with the name.
+    if (c?.kind === "evm") return c.added ? `${c.name} (added chain ${c.chainId})` : c.name;
+    const added = typeof d["network"] === "object" && d["network"] !== null && (d["network"] as { added?: unknown }).added === true;
+    if (added) return `Added chain ${chain.slice("eip155:".length)}`;
+    return `${net.name}${kind === "evm_transaction" ? " (EVM)" : ""}`;
+  }
+  return net.name;
 }

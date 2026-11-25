@@ -8,7 +8,8 @@ import { test } from "node:test";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 
-import { nameOf, networkName, Origin, SignBody } from "../../ui/src/Approve";
+import { nameOf, Origin, SignBody } from "../../ui/src/Approve";
+import { networkName } from "../../ui/src/Send";
 import { Phrase } from "../../ui/src/kit";
 import type { DappReview, NetworkId } from "../../ui/src/protocol";
 
@@ -280,7 +281,11 @@ test("the network row names Injective for Injective typed data asked on another 
   // A chain a site added names itself, so its ID goes with the name.
   setAddedChains([{ chainId: 999_999, name: "Ethereum", symbol: "ETH", rpc: ["https://rpc.example"], testnet: false }]);
   try {
-    assert.equal(networkName(typed("eip155:999999", true), "mainnet"), "Injective (asked on Ethereum, chain 999999)");
+    assert.equal(networkName(typed("eip155:999999", true), "mainnet"), "Injective (asked on Ethereum, added chain 999999)");
+    // The wallet's own send there (Send's review uses the same name): its ID, and that it
+    // was added, not just the name it was given.
+    assert.equal(networkName({ kind: "evm_transaction", chain: "eip155:999999", network: { name: "Ethereum", added: true } }, "mainnet"), "Ethereum (added chain 999999)");
+    assert.equal(networkName({ kind: "evm_transaction", chain: "eip155:8453", network: { name: "Base", added: false } }, "mainnet"), "Base");
   } finally {
     setAddedChains([]);
   }
