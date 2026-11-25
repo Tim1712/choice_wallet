@@ -9,7 +9,7 @@
 // - What it shows is the vault's decode of what will be signed, prepared when it asks;
 //   approving names that decode's digest.
 
-import { chainByCaip2, chainByKey, formatUnits, NETWORKS, shortDenom } from "@choice-wallet/chain";
+import { chainByKey, formatUnits, NETWORKS, shortDenom } from "@choice-wallet/chain";
 import { useEffect, useState, type ReactNode } from "react";
 
 import { arm, type ArmEnv } from "./arm";
@@ -19,7 +19,7 @@ import { Callout, Phrase, Screen, shortAddress, tokenSub } from "./kit";
 import { DeviceStep } from "./Ledger";
 import type { Coin, CosmosDisplay, DappRequest, DappReview, DeviceRequest, DeviceSignature, ListedChain, NetworkId, NewChain, Status, TokenInfo } from "./protocol";
 import { shown, visible } from "./review";
-import { Figure, formName, realName, SwapCards } from "./Send";
+import { Figure, formName, networkName, realName, SwapCards } from "./Send";
 
 /** How often the window asks for the request and the lock state (it also keeps the
  *  service worker, which holds the request, awake). */
@@ -641,28 +641,3 @@ function TypedData({ d }: { d: Record<string, unknown> }) {
   );
 }
 
-/** The chain a request is signed for: an EVM chain by its name (Injective's EVM side marked
- *  so), Solana's cluster, or Injective. */
-export function networkName(d: Record<string, unknown>, network: NetworkId): string {
-  const net = NETWORKS[network];
-  const kind = d["kind"];
-  if (kind === "solana_transaction" || kind === "solana_message") return net.solana.name;
-  const chain = typeof d["chain"] === "string" ? d["chain"] : "";
-  // Injective's EIP-712 domain is an Injective transaction, whichever EVM chain the site
-  // asked on: it takes effect on Injective (run-2 C16).
-  if (kind === "evm_typed_data" && typeof d["injective_tx"] === "object" && d["injective_tx"] !== null) {
-    const via = chainByCaip2(network, chain);
-    if (via?.kind !== "evm") return net.name;
-    // An added chain is named by the user or a site: its ID goes with the name.
-    return `${net.name} (asked on ${via.added ? `${via.name}, chain ${via.chainId}` : via.name})`;
-  }
-  if (chain.startsWith("eip155:")) {
-    const c = chainByCaip2(network, chain);
-    // An added chain is named by the user (or a site), so its ID goes with the name.
-    if (c?.kind === "evm") return c.added ? `${c.name} (chain ${c.chainId})` : c.name;
-    const added = typeof d["network"] === "object" && d["network"] !== null && (d["network"] as { added?: unknown }).added === true;
-    if (added) return `Chain ${chain.slice("eip155:".length)}`;
-    return `${net.name}${kind === "evm_transaction" ? " (EVM)" : ""}`;
-  }
-  return net.name;
-}
