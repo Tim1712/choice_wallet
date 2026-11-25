@@ -803,16 +803,22 @@ fn contract_call(
             if let (Some(from), Some(dest), Some(id)) = (address_arg(data, 0), address_arg(data, 1), uint_arg(data, 2))
             {
                 let dest_hex = dest.to_checksum_hex();
-                let what = if matches!(
+                let either = matches!(
                     sel,
                     TRANSFER_FROM | TRANSFER_FROM_AND_CALL | TRANSFER_FROM_AND_CALL_DATA
-                ) {
-                    format!("tokens or NFT #{id} of contract {}", short(&to))
+                );
+                let what = if either {
+                    format!("an amount of {id} or NFT #{id} of contract {}", short(&to))
                 } else {
                     format!("NFT #{id} of collection {}", short(&to))
                 };
                 let params = json!({ "collection": to, "from": from.to_checksum_hex(), "to": dest_hex, "token_id": id.to_string() });
                 if from == req.from {
+                    // On an ERC20 this is a transfer of that amount: weighed against the
+                    // balance as one is (review-3).
+                    if either {
+                        outflows.add(&to, id);
+                    }
                     recipient(ctx, &dest_hex, None, out);
                     out.push(finding(
                         "nft_send",
@@ -2155,6 +2161,39 @@ mod tests {
             erc20::transfer_calldata(&EthAddress::from_bytes([0x22; 20]), &U256::from_u128(5)),
         );
         assert_eq!(grade(&t).findings.len(), 0);
+    }
+
+    /// Review-3: transferFrom(me, x, n) is an ERC20 transfer of n or NFT #n: named both ways,
+    /// and n weighed against the balance as a transfer is.
+    #[test]
+    fn transfer_from_self_is_weighed() {
+        let token = EthAddress::from_bytes([0x44; 20]);
+        let ctx = Context {
+            balances: [(token.to_checksum_hex(), "100".to_owned())].into(),
+            ..Context::default()
+        };
+        let mut all = [0u8; 32];
+        all[31] = 100;
+        let r = req(
+            token,
+            call(TRANSFER_FROM, &[addr_word(FROM), addr_word([0xbb; 20]), all]),
+        );
+        let a = evm_transaction(&r, &EvmSide::injective(&MAINNET), &ctx);
+        let f = a.findings.iter().find(|f| f.rule == "nft_send").expect("named");
+        assert!(f.message.contains("an amount of 100 or NFT #100"), "{}", f.message);
+        assert!(rules_of(&a).contains(&"most_of_balance"), "{:?}", rules_of(&a));
+        // The same as transfer(x, 100) on the token.
+        let t = req(
+            token,
+            erc20::transfer_calldata(&EthAddress::from_bytes([0xbb; 20]), &U256::from_u128(100)),
+        );
+        assert!(rules_of(&evm_transaction(&t, &EvmSide::injective(&MAINNET), &ctx)).contains(&"most_of_balance"));
+        // safeTransferFrom is ERC721 only: no amount to weigh.
+        let s = req(
+            token,
+            call(SAFE_TRANSFER_FROM, &[addr_word(FROM), addr_word([0xbb; 20]), all]),
+        );
+        assert!(!rules_of(&evm_transaction(&s, &EvmSide::injective(&MAINNET), &ctx)).contains(&"most_of_balance"));
     }
 
     /// Run-2 C1: a token call the rules can't read in its exact form (a trailing byte, a dirty
