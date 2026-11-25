@@ -70,6 +70,12 @@ test("approvals: grants, fee grants, rewards address, CW20 and ERC20 allowances"
   assert.deepEqual(s.erc20, [{ token: `evm:${LUMA}`, spender: SPENDER, amount: (2n ** 256n - 1n).toString() }]);
   assert.equal(s.tokens[`evm:${LUMA}`]?.symbol, "LUMA");
   assert.equal(s.tokens[`cw20:${CW}`]?.symbol, "SHROOM");
+  // What it holds of them, for the screen's red and amber: 500 of 3 SHROOM is capped below
+  // the balance; LUMA isn't in the balance list, so its allowance has none to weigh against.
+  const balances = (s as Summary & { balances?: Record<string, string> }).balances ?? {};
+  assert.equal(balances[`cw20:${CW}`], (3n * 10n ** 18n).toString());
+  assert.equal(balances[`evm:${LUMA}`], undefined);
+  assert.ok("inj" in balances);
   assert.ok(net.state.blockscoutCalls.some((q) => q.includes("action=getLogs") && q.includes(ME_EVM.slice(2).toLowerCase())));
   assert.deepEqual(net.state.unhandled, []);
 

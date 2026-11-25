@@ -170,6 +170,7 @@ Settings → Approvals and grants lists what the account lets others do, and tak
 - **Fee allowances it gave**, with their limit and end, unwrapped from periodic and message-limited allowances.
 - **CW20 allowances** on every CW20 the wallet lists for the account (each contract's `all_allowances`).
 - **ERC20 allowances.** Blockscout's `getLogs` finds every `Approval` the account ever made (over all blocks, which public EVM nodes won't search); what is left of each comes from the token's `allowance()` on the user's EVM endpoint, so spent and revoked ones drop out. Blockscout can leave one out but can't invent one.
+- **Colour.** Each allowance is weighed against what the account holds of the token, from the wallet's balance list: unlimited, the whole balance or more, or a token whose balance the wallet didn't read (every one on another EVM chain's tab) is red; one capped below the balance is amber. The same for CW20, ERC20 and Permit2. A fee allowance with no limit, or one covering the INJ held, is red, a smaller one amber; NFT operators and single NFT approvals are red.
 
 "Revoke all" takes back everything on the Cosmos side in one transaction (up to 30 messages); each ERC20 allowance is its own EVM transaction. Revokes go through the same prepare, review and confirm as a send; the review reads them as "You take back". Checked live on testnet on 2026-11-09 (`e2e-live.mjs … approvals`): a site's grant, fee allowance and rewards redirect, and a real unlimited ERC20 allowance, each listed, revoked and checked on chain.
 

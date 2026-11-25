@@ -696,6 +696,9 @@ export type ApprovalsSummary = {
   /** By the token's `evm:` key; what is left of each, from the token. */
   erc20: { token: string; spender: string; amount: string }[];
   tokens: Record<string, TokenInfo>;
+  /** What the account holds of the tokens above (and of INJ), by key, where the wallet read
+   *  it. An allowance (or fee allowance) below it is amber; with none known, red. */
+  balances?: Record<string, string>;
   /** Contracts the screen names instead of showing the address, by lowercase `0x` address:
    *  Seaport and Permit2, and on Injective Choice's and Talis's contracts. */
   names?: Record<string, string>;

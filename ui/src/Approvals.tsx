@@ -8,16 +8,13 @@ import { useState } from "react";
 
 import { useKept } from "./kept";
 import { BackBar, Callout, Screen, shortAddress } from "./kit";
-import { canMoveFunds, permissionName } from "./permissions";
+import { allowanceLevel, canMoveFunds, feeAllowanceLevel, permissionName, UNLIMITED } from "./permissions";
 import type { Coin, EvmRevokeKind, RevokeItem, SendReview } from "./protocol";
 import { useRequest } from "./request";
 
 /** Permit2 and Seaport 1.6: one address each on every chain. */
 const PERMIT2 = "0x000000000022D473030F116dDEE9F6B43aC78BA3";
 const SEAPORT = "0x0000000000000068F116a894984e2DB1123eB395";
-
-/** Allowances from 2^128 up read as unlimited, as in Activity. */
-const UNLIMITED = 2n ** 128n;
 
 const until = (iso: string | null) => (iso ? `until ${new Date(iso).toLocaleDateString()}` : "no end date");
 
@@ -68,6 +65,11 @@ export function ApprovalsView({ canSign, onReview, onBack }: { canSign: boolean;
     const t = s.tokens[key];
     return t ? `${formatShort(a, t.decimals, 4)} ${t.symbol}` : a;
   };
+  // Red for what can take all there is, amber for an allowance capped below a balance the
+  // wallet read (permissions.ts).
+  const level = (red: boolean) => (red ? "symbol danger-text" : "symbol warn-text");
+  const held = (key: string) => s.balances?.[key];
+  const allowance = (key: string, a: string) => level(allowanceLevel(a, held(key)) === "red");
   const coins = (cs: Coin[]) => cs.map((c) => (c.denom === "inj" ? `${formatShort(c.amount, 18, 4)} INJ` : `${c.amount} ${c.denom}`)).join(", ");
 
   // Everything on the Cosmos side, for "Revoke all".
@@ -166,7 +168,7 @@ export function ApprovalsView({ canSign, onReview, onBack }: { canSign: boolean;
             {s.feeGrants.map((g, i) => (
               <div key={`f${i}`} className="token approval-row">
                 <span className="name">
-                  <span className="symbol">Pays fees from your INJ</span>
+                  <span className={level(feeAllowanceLevel(g.spendLimit, "inj", held("inj")) === "red")}>Pays fees from your INJ</span>
                   <span className="sub">
                     {shortAddress(g.grantee)} · {g.spendLimit.length ? `up to ${coins(g.spendLimit)}` : "no limit"}, {until(g.expiration)}
                   </span>
@@ -187,7 +189,7 @@ export function ApprovalsView({ canSign, onReview, onBack }: { canSign: boolean;
             {s.cw20.map((a, i) => (
               <div key={`c${i}`} className="token approval-row" title={a.token}>
                 <span className="name">
-                  <span className="symbol">{symbol(a.token)}</span>
+                  <span className={allowance(a.token, a.amount)}>{symbol(a.token)}</span>
                   <span className="sub">
                     {shortAddress(a.spender)} may take {amount(a.token, a.amount)}
                   </span>
@@ -198,7 +200,7 @@ export function ApprovalsView({ canSign, onReview, onBack }: { canSign: boolean;
             {s.erc20.map((a, i) => (
               <div key={`e${i}`} className="token approval-row" title={a.token}>
                 <span className="name">
-                  <span className={BigInt(a.amount) >= UNLIMITED ? "symbol danger-text" : "symbol"}>{symbol(a.token)}</span>
+                  <span className={allowance(a.token, a.amount)}>{symbol(a.token)}</span>
                   <span className="sub">
                     {who(a.spender)} may take {amount(a.token, a.amount)}
                   </span>
@@ -228,7 +230,7 @@ export function ApprovalsView({ canSign, onReview, onBack }: { canSign: boolean;
             {s.cw721Approvals.map((a, i) => (
               <div key={`ca${i}`} className="token approval-row" title={a.collection}>
                 <span className="name">
-                  <span className="symbol">NFT #{a.tokenId.length > 12 ? `${a.tokenId.slice(0, 10)}…` : a.tokenId}</span>
+                  <span className="symbol danger-text">NFT #{a.tokenId.length > 12 ? `${a.tokenId.slice(0, 10)}…` : a.tokenId}</span>
                   <span className="sub">
                     {shortAddress(a.spender)} may move it · {shortAddress(a.collection)}
                   </span>
@@ -248,7 +250,7 @@ export function ApprovalsView({ canSign, onReview, onBack }: { canSign: boolean;
             {s.nftApprovals.map((t, i) => (
               <div key={`n${i}`} className="token approval-row" title={t.collection}>
                 <span className="name">
-                  <span className="symbol">NFT #{t.tokenId.length > 12 ? `${t.tokenId.slice(0, 10)}…` : t.tokenId}</span>
+                  <span className="symbol danger-text">NFT #{t.tokenId.length > 12 ? `${t.tokenId.slice(0, 10)}…` : t.tokenId}</span>
                   <span className="sub">
                     {who(t.approved)} may move it · {shortAddress(t.collection)}
                   </span>
@@ -286,7 +288,7 @@ export function ApprovalsView({ canSign, onReview, onBack }: { canSign: boolean;
             {s.permit2.map((p, i) => (
               <div key={`p${i}`} className="token approval-row" title={p.token}>
                 <span className="name">
-                  <span className={BigInt(p.amount) >= UNLIMITED ? "symbol danger-text" : "symbol"}>{symbol(p.token)}</span>
+                  <span className={allowance(p.token, p.amount)}>{symbol(p.token)}</span>
                   <span className="sub">
                     {who(p.spender)} may take {amount(p.token, p.amount)} until {date(p.expiration)}
                     {p.permitsCancelled ? " · permits cancelled" : ""}

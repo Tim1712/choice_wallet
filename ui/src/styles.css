@@ -589,6 +589,7 @@ details.raw summary {
 .approval-row .name { min-width: 0; }
 .approval-row .sub { white-space: normal; }
 .danger-text { color: var(--negative); }
+.warn-text { color: var(--warning); }
 .revoke-list {
   margin: 8px 0 0;
   padding-left: 18px;
