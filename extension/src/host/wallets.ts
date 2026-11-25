@@ -89,6 +89,12 @@ function next(prefix: string, names: readonly string[]): string {
   const n = Math.max(0, ...names.map((x) => Number(re.exec(x)?.[1] ?? 0)));
   return `${prefix} ${n + 1}`;
 }
+/** `{mnemonic}` or `{private_key}`, a string: anything else never reaches the vault, whose
+ *  error for it could otherwise read back what was sent. */
+function isNewSecret(secret: unknown): secret is NewSecret {
+  const shape = secret as Partial<Record<"mnemonic" | "private_key", unknown>> | null;
+  return typeof shape === "object" && shape !== null && Object.keys(shape).length === 1 && (typeof shape.mnemonic === "string" || typeof shape.private_key === "string");
+}
 const walletPrefix = (type: Wallet["type"]) => (type === "mnemonic" ? "Recovery phrase" : type === "ledger" ? "Ledger" : "Imported key");
 const cleanName = (name: unknown) => (typeof name === "string" ? cleanText(name.replace(/\s+/g, " "), MAX_NAME) : "");
 
@@ -221,7 +227,8 @@ export function createWallets(h: WalletsHost) {
   }
 
   /** The first wallet, and the password for every wallet after it. */
-  async function create(secret: NewSecret, password: string, imported: boolean): Promise<UiResponse<Status>> {
+  async function create(secret: unknown, password: string, imported: boolean): Promise<UiResponse<Status>> {
+    if (!isNewSecret(secret)) return err("bad_request", "Give a recovery phrase or a private key.");
     const s = await stored();
     if (s.vault || s.keystore) return err("exists", "A wallet already exists on this device.");
     const v = await h.vault<{ vault: string; unlock_key: string }>("create_vault", { password });
@@ -317,12 +324,10 @@ export function createWallets(h: WalletsHost) {
   async function addWallet(secret: unknown, created: boolean): Promise<UiResponse<Status>> {
     const s = await open();
     if ("ok" in s) return s;
-    const shape = secret as Partial<Record<"mnemonic" | "private_key", unknown>> | null;
-    const ok = typeof shape === "object" && shape !== null && Object.keys(shape).length === 1 && (typeof shape.mnemonic === "string" || typeof shape.private_key === "string");
-    if (!ok) return err("bad_request", "Give a recovery phrase or a private key.");
+    if (!isNewSecret(secret)) return err("bad_request", "Give a recovery phrase or a private key.");
     if (s.wallets.length >= MAX_WALLETS) return err("too_many", `At most ${MAX_WALLETS} wallets.`);
     if (s.accounts.length >= MAX_ACCOUNTS) return err("too_many", `The list holds at most ${MAX_ACCOUNTS} accounts.`);
-    const made = await newWallet(s.key, secret as NewSecret, s.wallets);
+    const made = await newWallet(s.key, secret, s.wallets);
     if (!made.ok) return made;
     const { wallet, first } = made.result;
     const cosmos = NETWORKS.mainnet.cosmos;

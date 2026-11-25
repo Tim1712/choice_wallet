@@ -51,7 +51,7 @@ The vault is `choice-wallet-core`, `choice-wallet-cosmos`, `choice-wallet-inject
 
 - `#![forbid(unsafe_code)]` in every vault crate, except `choice-wallet-wasm`: the glue `#[wasm_bindgen]` generates uses `unsafe`. That crate is one function and contains no `unsafe` of its own.
 - Secrets are zeroized on drop (`Zeroizing`, `ZeroizeOnDrop`). `Debug` on secret types prints `<redacted>`.
-- No logging of secrets, seeds, private keys, passwords or derived keys. Errors never include secret material.
+- No logging of secrets, seeds, private keys, passwords or derived keys. Errors never include secret material: a method that takes a password, a secret or the unlock key answers a request it can't parse with at most the name of a missing field, never serde's message, which quotes the value it didn't expect.
 - Decrypt failures return one error for wrong password and corrupted data.
 - Decoders refuse anything they can't round-trip byte for byte, recursing into every nested `Any`.
 - Signing functions take decoded request objects, not raw bytes, so nothing can be signed without being decoded first.

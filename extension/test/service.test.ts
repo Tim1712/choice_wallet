@@ -108,6 +108,12 @@ test("bad input is refused, not thrown", async () => {
   }
   const short = await service.handle({ type: "create", secret: { mnemonic: PHRASE }, password: "short" });
   assert.equal(!short.ok && short.error.code, "keystore");
+  // A secret in the wrong shape is refused before the vault, whose error could read it back.
+  for (const secret of [PHRASE, { mnemonic: PHRASE, private_key: EIP155_KEY }, { mnemonic: 1 }, null]) {
+    const r = await service.handle({ type: "create", secret, password: PASSWORD });
+    assert.equal(!r.ok && r.error.code, "bad_request");
+    assert.ok(!JSON.stringify(r).includes("abandon"));
+  }
   const g = await service.handle({ type: "generate", words: 24 });
   assert.equal(g.ok && (g.result as { phrase: string }).phrase.split(" ").length, 24);
 });
