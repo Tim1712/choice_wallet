@@ -37,3 +37,9 @@ test("a plain SPL Transfer the signer authorises always shows its amount: as its
   assert.deepEqual(unnamed.sends, []);
   assert.deepEqual(unnamed.others, ["Sends 250000000000 base units of an unnamed token from your account mySo…1111 to atta…1111"]);
 });
+
+test("every Solana memo is shown, in order", () => {
+  const memo = (text: string): SolanaStep => ({ program: "MemoSq4gqABAXKb96qnH8TysNcWxMyWCqXgDLGmfcHr", program_name: "Memo", type: "memo", text, hex: "" });
+  const v = shown(display([memo("deposit 111"), memo("deposit 222")]), "mainnet");
+  assert.deepEqual(v.memos, ["deposit 111", "deposit 222"]);
+});

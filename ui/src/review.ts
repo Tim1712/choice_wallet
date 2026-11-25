@@ -92,6 +92,8 @@ export type Shown = {
    *  unused gas). On another chain, in its coin (`native:<chain>`). */
   fee: Coin[];
   memo: string;
+  /** For Solana: every memo instruction's text, in order (a transaction can carry several). */
+  memos?: string[];
   evm: boolean;
   /** For Cosmos: the messages a send or conversion card above stands for, by index. Any
    *  other message is shown in full. */
@@ -313,7 +315,7 @@ const short = (a: string) => (a.length > 12 ? `${a.slice(0, 4)}…${a.slice(-4)}
  *  instruction already says, is the allowance the transaction leaves: its card replaces
  *  the instruction's for that delegate and token (run-2 C2). */
 function solanaShown(d: SolanaDisplay, cluster: string, findings: Finding[]): Shown {
-  const out: Shown = { sends: [], nfts: [], moves: [], swaps: [], bridges: [], mints: [], approvals: [], converts: [], stakes: [], revokes: [], votes: [], others: [], fee: [{ denom: "sol", amount: d.fee.total }], memo: "", evm: false };
+  const out: Shown = { sends: [], nfts: [], moves: [], swaps: [], bridges: [], mints: [], approvals: [], converts: [], stakes: [], revokes: [], votes: [], others: [], fee: [{ denom: "sol", amount: d.fee.total }], memo: "", memos: [], evm: false };
   /** The token account an instruction's approval card is for. */
   const approvedFrom = new Map<ApprovalLine, string>();
   for (const s of d.instructions) {
@@ -370,7 +372,7 @@ function solanaShown(d: SolanaDisplay, cluster: string, findings: Finding[]): Sh
         out.others.push("Takes back the rent of a finished bridge transfer's record");
         break;
       case "memo":
-        out.memo = s.text ?? `0x${s.hex}`;
+        out.memos!.push(s.text ?? `0x${s.hex}`);
         break;
       case "assign":
         out.others.push(`Hands ${short(s.account)} to ${s.owner_name ?? short(s.owner)}`);
