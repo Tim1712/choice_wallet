@@ -1,7 +1,7 @@
 // Send: the form (with its token picker), the review, and the sent screen.
 
 import { chainByCaip2, cw20Address, evmAddress, formatShort, formatUnits, isSolanaAddress, NETWORKS, parseUnits, shortDenom, usdValue } from "@choice-wallet/chain";
-import { useEffect, useState, type FormEvent } from "react";
+import { useEffect, useRef, useState, type FormEvent } from "react";
 
 import { useBackend } from "./backend";
 import { RecipientPicker } from "./Contacts";
@@ -61,6 +61,9 @@ export function SendForm({
   const [choosing, setChoosing] = useState(false);
   const [to, setTo] = useState("");
   const [memo, setMemo] = useState("");
+  // A memo the wallet filled in, and for which recipient: it goes when the recipient
+  // changes, unless the user has since changed it.
+  const filled = useRef<{ to: string; memo: string } | null>(null);
   const [amount, setAmount] = useState("");
   const [max, setMax] = useState(false);
   const [contacts, setContacts] = useState<Contact[] | null>(null);
@@ -76,6 +79,11 @@ export function SendForm({
   useEffect(() => {
     const entered = to.trim();
     setCheck(null);
+    const was = filled.current;
+    if (was && was.to !== entered) {
+      filled.current = null;
+      setMemo((m) => (m === was.memo ? "" : m));
+    }
     if (!ADDRESS.test(entered)) return;
     let live = true;
     const timer = setTimeout(() => {
@@ -83,7 +91,12 @@ export function SendForm({
         if (!live || !r.ok) return;
         setCheck(r.result);
         const saved = r.result.contact?.memo;
-        if (saved) setMemo((m) => m || saved);
+        if (saved)
+          setMemo((m) => {
+            if (m) return m;
+            filled.current = { to: entered, memo: saved };
+            return saved;
+          });
       });
     }, 300);
     return () => {
@@ -103,6 +116,7 @@ export function SendForm({
           const own = token?.chain ? accounts.find((a) => Object.values(a.addresses).includes(address))?.addresses[token.chain] : undefined;
           setTo(own ?? address);
           setMemo(token?.chain ? "" : m);
+          filled.current = !token?.chain && m ? { to: own ?? address, memo: m } : null;
           setChoosing(false);
         }}
       />
