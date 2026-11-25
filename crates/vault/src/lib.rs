@@ -64,8 +64,8 @@ mod request;
 mod util;
 
 use choice_wallet_core::{Mnemonic, hexutil};
-use serde::Deserialize;
 use serde::de::DeserializeOwned;
+use serde::{Deserialize, Serialize};
 use serde_json::value::RawValue;
 use serde_json::{Value, json};
 use zeroize::Zeroizing;
@@ -78,12 +78,54 @@ use crate::request::SignRequest;
 pub const PROTOCOL: u32 = 2;
 
 /// Handle one JSON request and return the JSON response. Never panics on bad input.
+///
+/// A response holding a secret (a recovery phrase, a private key, the unlock key) is written
+/// once into a string sized for it, so the only copy left is the one returned; the caller
+/// wipes it once read (`choice-wallet-wasm` does).
 pub fn handle(request: &str) -> String {
-    let response = match call(request) {
-        Ok(result) => json!({ "ok": true, "result": result }),
-        Err(error) => json!({ "ok": false, "error": error }),
-    };
-    response.to_string()
+    match call(request) {
+        Ok(Reply::Json(result)) => json!({ "ok": true, "result": result }).to_string(),
+        Ok(Reply::Secret(result)) => {
+            const HEAD: &str = r#"{"ok":true,"result":"#;
+            let mut out = String::with_capacity(HEAD.len() + result.len() + 1);
+            out.push_str(HEAD);
+            out.push_str(&result);
+            out.push('}');
+            out
+        }
+        Err(error) => json!({ "ok": false, "error": error }).to_string(),
+    }
+}
+
+/// A method's result: plain data, or JSON holding a secret, wiped on drop.
+enum Reply {
+    Json(Value),
+    Secret(Zeroizing<String>),
+}
+
+/// `value` as JSON, in a buffer sized for it first (so no reallocation leaves a copy of a
+/// secret behind) and wiped on drop.
+pub(crate) fn secret_json(value: &impl Serialize) -> Zeroizing<String> {
+    struct Count(usize);
+    impl std::io::Write for Count {
+        fn write(&mut self, b: &[u8]) -> std::io::Result<usize> {
+            self.0 += b.len();
+            Ok(b.len())
+        }
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+    let mut n = Count(0);
+    serde_json::to_writer(&mut n, value).expect("plain data");
+    let mut buf = Zeroizing::new(Vec::with_capacity(n.0));
+    serde_json::to_writer(&mut *buf, value).expect("plain data");
+    Zeroizing::new(String::from_utf8(std::mem::take(&mut *buf)).expect("JSON is UTF-8"))
+}
+
+/// The unlock key as the host keeps it: hex, wiped on drop.
+fn key_hex(key: &choice_wallet_core::keystore::UnlockKey) -> Zeroizing<String> {
+    Zeroizing::new(hexutil::encode(key.as_bytes()))
 }
 
 #[derive(Deserialize)]
@@ -258,27 +300,45 @@ fn borrowed<'a, T: Deserialize<'a>>(raw: Option<&'a RawValue>) -> Result<T, Vaul
     serde_json::from_str(raw.map_or("{}", RawValue::get)).map_err(|e| VaultError::bad(e.to_string()))
 }
 
-fn call(request: &str) -> Result<Value, VaultError> {
+fn call(request: &str) -> Result<Reply, VaultError> {
     // The whole request could be a secret method's, so its message can't quote it either.
     let env: Envelope = serde_json::from_str(request).map_err(|e| opaque("request", &e))?;
     let p = env.params;
-    match env.method.as_str() {
+    let plain = match env.method.as_str() {
         "version" => Ok(json!({ "protocol": PROTOCOL, "vault": env!("CARGO_PKG_VERSION") })),
         "chains" => Ok(serde_json::to_value(chains::list()).expect("plain data")),
         "generate_mnemonic" => {
             let GenerateMnemonic { words } = params(p)?;
             let m = Mnemonic::generate(words)?;
-            Ok(json!({ "phrase": m.phrase().as_str() }))
+            #[derive(Serialize)]
+            struct Out<'a> {
+                phrase: &'a str,
+            }
+            return Ok(Reply::Secret(secret_json(&Out { phrase: &m.phrase() })));
         }
         "create_vault" => {
             let CreateVault { password } = secret_params("create_vault", p)?;
             let (vault, key) = keys::create_vault(&password)?;
-            Ok(json!({ "vault": hexutil::encode(&vault), "unlock_key": hexutil::encode(key.as_bytes()) }))
+            #[derive(Serialize)]
+            struct Out<'a> {
+                vault: String,
+                unlock_key: &'a str,
+            }
+            return Ok(Reply::Secret(secret_json(&Out {
+                vault: hexutil::encode(&vault),
+                unlock_key: &key_hex(&key),
+            })));
         }
         "unlock" => {
             let Unlock { vault, password } = secret_params("unlock", p)?;
             let key = keys::unlock(&vault, &password)?;
-            Ok(json!({ "unlock_key": hexutil::encode(key.as_bytes()) }))
+            #[derive(Serialize)]
+            struct Out<'a> {
+                unlock_key: &'a str,
+            }
+            return Ok(Reply::Secret(secret_json(&Out {
+                unlock_key: &key_hex(&key),
+            })));
         }
         "seal_secret" => {
             let SealSecret {
@@ -296,12 +356,19 @@ fn call(request: &str) -> Result<Value, VaultError> {
                 wallet,
             } = secret_params("migrate", p)?;
             let (m, kind) = keys::migrate(&keystore, &password, &wallet)?;
-            Ok(json!({
-                "vault": hexutil::encode(&m.vault),
-                "unlock_key": hexutil::encode(m.key.as_bytes()),
-                "secret": hexutil::encode(&m.sealed),
-                "kind": kind,
-            }))
+            #[derive(Serialize)]
+            struct Out<'a> {
+                vault: String,
+                unlock_key: &'a str,
+                secret: String,
+                kind: &'static str,
+            }
+            return Ok(Reply::Secret(secret_json(&Out {
+                vault: hexutil::encode(&m.vault),
+                unlock_key: &key_hex(&m.key),
+                secret: hexutil::encode(&m.sealed),
+                kind,
+            })));
         }
         "accounts" => {
             let Accounts {
@@ -347,7 +414,9 @@ fn call(request: &str) -> Result<Value, VaultError> {
                 wallet,
                 account,
             } = secret_params("reveal", p)?;
-            keys::reveal(&vault, &password, &secret, &wallet, account)
+            return Ok(Reply::Secret(keys::reveal(
+                &vault, &password, &secret, &wallet, account,
+            )?));
         }
         "change_password" => {
             let ChangePassword {
@@ -362,9 +431,17 @@ fn call(request: &str) -> Result<Value, VaultError> {
                 .zip(&r.secrets)
                 .map(|(wallet, s)| (wallet.clone(), Value::String(hexutil::encode(s))))
                 .collect();
-            Ok(
-                json!({ "vault": hexutil::encode(&r.vault), "unlock_key": hexutil::encode(r.key.as_bytes()), "secrets": sealed }),
-            )
+            #[derive(Serialize)]
+            struct Out<'a> {
+                vault: String,
+                unlock_key: &'a str,
+                secrets: serde_json::Map<String, Value>,
+            }
+            return Ok(Reply::Secret(secret_json(&Out {
+                vault: hexutil::encode(&r.vault),
+                unlock_key: &key_hex(&r.key),
+                secrets: sealed,
+            })));
         }
         "build_cosmos" => build::cosmos(params(p)?),
         "build_evm" => Ok(json!({ "request": build::evm(params(p)?)? })),
@@ -389,7 +466,7 @@ fn call(request: &str) -> Result<Value, VaultError> {
             let checked = request::decode(request)?;
             if checked.solana() {
                 let key = keys::solana_key(&secret, &wallet, &unlock_key, account)?;
-                return request::sign_solana(checked, &digest, &key);
+                return request::sign_solana(checked, &digest, &key).map(Reply::Json);
             }
             let key = keys::key(&secret, &wallet, &unlock_key, account)?;
             request::sign(checked, &digest, &key)
@@ -451,13 +528,15 @@ fn call(request: &str) -> Result<Value, VaultError> {
                 let pk: [u8; 32] = util::hex(&public_key, "public_key")?
                     .try_into()
                     .map_err(|_| VaultError::bad("public_key is not an ed25519 public key"))?;
-                return request::device_sign_solana(checked, &digest, &pk, &util::hex(&signature, "signature")?);
+                return request::device_sign_solana(checked, &digest, &pk, &util::hex(&signature, "signature")?)
+                    .map(Reply::Json);
             }
             let pk = device_key(&public_key)?;
             request::device_sign(checked, &digest, &pk, &util::hex(&signature, "signature")?, format)
         }
         other => Err(VaultError::new(UNKNOWN_METHOD, format!("unknown method {other:?}"))),
-    }
+    };
+    Ok(Reply::Json(plain?))
 }
 
 #[cfg(test)]

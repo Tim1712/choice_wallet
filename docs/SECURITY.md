@@ -59,7 +59,7 @@ The vault is `choice-wallet-core`, `choice-wallet-cosmos`, `choice-wallet-inject
 ### Known limits
 
 - `bip32` 0.6 wipes the private key on drop (through k256) but not the chain code. A chain code alone reveals no key. The ed25519 (SLIP-0010) derivation in `choice-wallet-core` wipes both.
-- Zeroize is best-effort once a secret crosses into JavaScript: passwords and pasted phrases arrive as JS strings, which can't be wiped.
+- Zeroize is best-effort once a secret crosses into JavaScript: passwords and pasted phrases arrive as JS strings, which can't be wiped. Going out, a response holding a secret (a phrase, a private key, the unlock key) is written once into a wiped buffer sized for it, and the WASM copy is wiped once JavaScript has its string; that string, like every one the service worker and pages hold, stays until garbage collected.
 - Chrome doesn't write `chrome.storage.session` to disk, but the OS can swap or hibernate memory.
 
 ## Dependency budget
