@@ -442,6 +442,13 @@ export function SignBody({ review, network, typed, onTyped, account }: { review:
             <span>{visible(view.memo)}</span>
           </div>
         )}
+        {/* Solana: every memo, each on its row. */}
+        {view?.memos?.map((m, i, all) => (
+          <div className="row" key={`memo-${i}`}>
+            <span>{all.length > 1 ? `Memo ${i + 1} of ${all.length}` : "Memo"}</span>
+            <span>{visible(m)}</span>
+          </div>
+        ))}
         {review.checkedBy && (
           <div className="row">
             <span>{d["kind"] === "evm_transaction" ? "Estimated on" : "Simulated on"}</span>

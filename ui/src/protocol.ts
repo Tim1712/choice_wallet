@@ -316,13 +316,29 @@ export type SolanaDisplay = {
 export type SolanaStep = { program: string; program_name: string | null } & (
   | { type: "sol_transfer"; from: string; to: string; lamports: string }
   | { type: "create_account"; from: string; account: string; lamports: string; space: string; owner: string; owner_name: string | null }
+  | { type: "create_account_with_seed"; from: string; account: string; base: string; lamports: string; space: string; owner: string; owner_name: string | null }
+  | { type: "transfer_with_seed"; from: string; base: string; to: string; lamports: string }
   | { type: "assign"; account: string; owner: string; owner_name: string | null }
   | { type: "allocate"; account: string; space: string }
   | { type: "nonce_withdraw"; nonce: string; to: string; lamports: string; signers: string[] }
   | { type: "nonce_authorize"; nonce: string; new_authority: string; signers: string[] }
   | { type: "advance_nonce"; nonce: string; authority: string }
   | { type: "compute_budget"; unit_limit?: number; unit_price?: string }
-  | { type: "token_transfer"; source: string; destination: string; destination_owner: string | null; authority: string; amount: string; mint: string | null; decimals: number | null; usdc: boolean }
+  | {
+      type: "token_transfer";
+      source: string;
+      destination: string;
+      destination_owner: string | null;
+      authority: string;
+      amount: string;
+      /** The token, when the instruction names it (TransferChecked). */
+      mint: string | null;
+      decimals: number | null;
+      usdc: boolean;
+      /** A plain Transfer's token, as the vault's rules read it from the source account (the
+       *  transaction opening it, or the host's lookup); null when neither names it. */
+      source_mint?: string | null;
+    }
   | { type: "token_approve"; source: string; delegate: string; owner: string; amount: string; mint: string | null; decimals: number | null }
   | { type: "token_revoke"; source: string; owner: string }
   | { type: "token_set_authority"; account: string; authority_kind: number; new_authority: string | null; current: string }
@@ -335,7 +351,7 @@ export type SolanaStep = { program: string; program_name: string | null } & (
   | { type: "memo"; text: string | null; hex: string }
   | SolanaBridgeStep
   | { type: "bridge_reclaim"; payee: string; event_account: string }
-  | { type: "stake_authorize"; stake: string; authority: string; new_authority: string; authority_kind: "staker" | "withdrawer" }
+  | { type: "stake_authorize"; stake: string; signers: string[]; new_authority: string; authority_kind: "staker" | "withdrawer" }
   | { type: "stake_withdraw"; stake: string; to: string; authority: string; lamports: string }
   | { type: "unreadable"; reason: string }
   | { type: "program"; accounts: { address: string; signer: boolean; writable: boolean; table: { address: string; index: number } | null }[]; data: string }

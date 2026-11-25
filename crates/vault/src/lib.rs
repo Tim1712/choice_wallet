@@ -354,7 +354,7 @@ fn call(request: &str) -> Result<Value, VaultError> {
             let Decode { request, context } = borrowed(p)?;
             let checked = request::decode(request)?;
             Ok(json!({
-                "display": checked.display,
+                "display": checked.display_with(&context),
                 "risk": checked.assess(&context),
                 "digest": hexutil::encode(&checked.digest),
             }))

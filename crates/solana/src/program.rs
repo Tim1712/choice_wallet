@@ -187,6 +187,34 @@ pub enum Instruction {
         /// The program that will own it.
         owner: Pubkey,
     },
+    /// Creates and funds an account at an address derived from `base`, a seed and `owner`
+    /// (System's `CreateAccountWithSeed`).
+    CreateAccountWithSeed {
+        /// Pays; signs.
+        from: Pubkey,
+        /// The new account.
+        account: Pubkey,
+        /// The address it derives from; signs.
+        base: Pubkey,
+        /// Lamports moved into it.
+        lamports: u64,
+        /// Its size in bytes.
+        space: u64,
+        /// The program that will own it.
+        owner: Pubkey,
+    },
+    /// Moves SOL out of an account derived from `base` (System's `TransferWithSeed`): `base`
+    /// signs for it.
+    TransferWithSeed {
+        /// The derived account it leaves.
+        from: Pubkey,
+        /// The address `from` derives from; signs.
+        base: Pubkey,
+        /// Receives.
+        to: Pubkey,
+        /// Lamports.
+        lamports: u64,
+    },
     /// Puts `space` bytes of data on a system account. A system account carrying data can't
     /// send SOL or pay a fee again.
     Allocate {
@@ -366,12 +394,14 @@ pub enum Instruction {
         event_account: Pubkey,
     },
     /// Changes who manages (`kind` 0, the staker) or withdraws from (`kind` 1, the
-    /// withdrawer) a stake account: Stake's `Authorize` and `AuthorizeChecked`.
+    /// withdrawer) a stake account: Stake's `Authorize` and `AuthorizeChecked`. The Stake
+    /// program accepts the current staker or withdrawer from any of the instruction's signing
+    /// accounts (the authority's slot is never read), so those are kept.
     StakeAuthorize {
         /// The stake account.
         stake: Pubkey,
-        /// Its current staker or withdrawer; signs.
-        authority: Pubkey,
+        /// The instruction's signing accounts: one is the current staker or withdrawer.
+        signers: Vec<Pubkey>,
         /// Who it becomes.
         new_authority: Pubkey,
         /// 0 staker, 1 withdrawer.
@@ -495,23 +525,22 @@ fn stake(accounts: &[Account], data: &[u8]) -> Instruction {
         reason,
     };
     match u32_at(data, 0) {
-        // Authorize(new authority, kind): [stake, clock, authority, (custodian)].
+        // Authorize(new authority, kind): [stake, clock, authority, (custodian)]. The program
+        // checks the current authority against every signing account, wherever it is.
         Some(1) => match (data.len(), acct(0), acct(2), key_at(data, 4), u32_at(data, 36)) {
-            (40, Some(stake), Some(authority), Some(new_authority), Some(kind @ 0..=1)) => {
-                Instruction::StakeAuthorize {
-                    stake,
-                    authority,
-                    new_authority,
-                    kind,
-                }
-            }
+            (40, Some(stake), Some(_), Some(new_authority), Some(kind @ 0..=1)) => Instruction::StakeAuthorize {
+                stake,
+                signers: signers(accounts),
+                new_authority,
+                kind,
+            },
             _ => unreadable("a Stake Authorize that isn't laid out as one"),
         },
         // AuthorizeChecked(kind): [stake, clock, authority, new authority (signs), (custodian)].
         Some(10) => match (data.len(), acct(0), acct(2), acct(3), u32_at(data, 4)) {
-            (8, Some(stake), Some(authority), Some(new_authority), Some(kind @ 0..=1)) => Instruction::StakeAuthorize {
+            (8, Some(stake), Some(_), Some(new_authority), Some(kind @ 0..=1)) => Instruction::StakeAuthorize {
                 stake,
-                authority,
+                signers: signers(accounts),
                 new_authority,
                 kind,
             },
@@ -603,6 +632,9 @@ fn system(accounts: &[Account], d: &[u8]) -> Option<Instruction> {
                 space: u64_at(d, 4)?,
             }
         }
+        // AdvanceNonceAccount, exactly. With bytes after its kind the runtime still runs it
+        // (and the message still counts as a durable nonce, see `Message::durable_nonce`),
+        // but no wallet or dapp builds one: it stays unreadable, red, rather than read.
         4 => {
             len(4)?;
             Instruction::AdvanceNonce {
@@ -620,8 +652,36 @@ fn system(accounts: &[Account], d: &[u8]) -> Option<Instruction> {
                 owner: key_at(d, 44 + seed)?,
             }
         }
+        // CreateAccountWithSeed: [from, account, (base)]. Data: base, a length-prefixed seed
+        // (u64 length), lamports, space, owner.
+        3 => {
+            let seed = usize::try_from(u64_at(d, 36)?).ok()?;
+            let at = 44usize.checked_add(seed)?;
+            len(at.checked_add(48)?)?;
+            Instruction::CreateAccountWithSeed {
+                from: acct(0)?,
+                account: acct(1)?,
+                base: key_at(d, 4)?,
+                lamports: u64_at(d, at)?,
+                space: u64_at(d, at + 8)?,
+                owner: key_at(d, at + 16)?,
+            }
+        }
+        // TransferWithSeed: [from (derived), base (signs), to]. Data: lamports, a
+        // length-prefixed seed (u64 length), the derived account's owner.
+        11 => {
+            let seed = usize::try_from(u64_at(d, 12)?).ok()?;
+            len(20usize.checked_add(seed)?.checked_add(32)?)?;
+            Instruction::TransferWithSeed {
+                from: acct(0)?,
+                base: acct(1)?,
+                to: acct(2)?,
+                lamports: u64_at(d, 4)?,
+            }
+        }
+        // InitializeNonceAccount (6) and UpgradeNonceAccount (12) set up a nonce account;
         // AllocateWithSeed (9) allocates a derived address, not a signing account.
-        3 | 6 | 9 | 11 | 12 => Instruction::Other { program: SYSTEM.key() },
+        6 | 9 | 12 => Instruction::Other { program: SYSTEM.key() },
         _ => return None,
     })
 }
@@ -798,12 +858,16 @@ mod tests {
         let mut authorize = 1u32.to_le_bytes().to_vec();
         authorize.extend_from_slice(&them);
         authorize.extend_from_slice(&1u32.to_le_bytes());
-        let accts = [acct(stake), acct(clock), acct(me)];
+        let signer = |key: [u8; 32]| Account {
+            signer: true,
+            ..acct(key)
+        };
+        let accts = [acct(stake), acct(clock), signer(me)];
         assert_eq!(
             read(&STAKE.key(), &accts, &authorize),
             Instruction::StakeAuthorize {
                 stake,
-                authority: me,
+                signers: vec![me],
                 new_authority: them,
                 kind: 1
             }
@@ -813,12 +877,12 @@ mod tests {
         assert_eq!(
             read(
                 &STAKE.key(),
-                &[acct(stake), acct(clock), acct(me), acct(them)],
+                &[acct(stake), acct(clock), signer(me), signer(them)],
                 &checked
             ),
             Instruction::StakeAuthorize {
                 stake,
-                authority: me,
+                signers: vec![me, them],
                 new_authority: them,
                 kind: 0
             }
@@ -838,6 +902,11 @@ mod tests {
                 lamports: 100_000_000_000
             }
         );
+        // The signer anywhere, as the custodian's slot: one of the signers all the same.
+        assert!(matches!(
+            read(&STAKE.key(), &[acct(stake), acct(clock), acct(them), signer(me)], &authorize),
+            Instruction::StakeAuthorize { signers, .. } if signers == vec![me]
+        ));
         // A trailing byte, a third kind, or a missing account: unreadable, never guessed.
         let mut longer = authorize.clone();
         longer.push(0);
@@ -903,6 +972,46 @@ mod tests {
                 signers: vec![auth]
             }
         );
+        // CreateAccountWithSeed and TransferWithSeed, with their seed.
+        let mut create = 3u32.to_le_bytes().to_vec();
+        create.extend_from_slice(&auth);
+        create.extend_from_slice(&4u64.to_le_bytes());
+        create.extend_from_slice(b"seed");
+        create.extend_from_slice(&9u64.to_le_bytes());
+        create.extend_from_slice(&10u64.to_le_bytes());
+        create.extend_from_slice(&[8; 32]);
+        assert_eq!(
+            read(&SYSTEM.key(), &[signer(auth), acct(n)], &create),
+            Instruction::CreateAccountWithSeed {
+                from: auth,
+                account: n,
+                base: auth,
+                lamports: 9,
+                space: 10,
+                owner: [8; 32]
+            }
+        );
+        let mut send = 11u32.to_le_bytes().to_vec();
+        send.extend_from_slice(&7u64.to_le_bytes());
+        send.extend_from_slice(&4u64.to_le_bytes());
+        send.extend_from_slice(b"seed");
+        send.extend_from_slice(&[8; 32]);
+        assert_eq!(
+            read(&SYSTEM.key(), &[acct(n), signer(auth), acct(to)], &send),
+            Instruction::TransferWithSeed {
+                from: n,
+                base: auth,
+                to,
+                lamports: 7
+            }
+        );
+        for mut d in [create, send] {
+            d.push(0);
+            assert!(matches!(
+                read(&SYSTEM.key(), &[acct(n), signer(auth), acct(to)], &d),
+                Instruction::Unreadable { .. }
+            ));
+        }
         // Any other length is unreadable.
         alloc.push(0);
         assert!(matches!(

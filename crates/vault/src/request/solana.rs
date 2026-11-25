@@ -54,6 +54,22 @@ pub(super) fn solana_tx(
     })
 }
 
+/// Each plain token `Transfer`'s token, as the rules read it from its source account (the
+/// transaction opening it, or the host's lookup), as `source_mint`: null when neither names it.
+pub(super) fn source_mints(display: &mut Value, r: &choice_wallet_solana::Read, ctx: &Context) {
+    use choice_wallet_solana::program::Instruction as I;
+    for (s, v) in r
+        .steps
+        .iter()
+        .zip(display["instructions"].as_array_mut().into_iter().flatten())
+    {
+        if let I::TokenTransfer { source, mint: None, .. } = &s.instruction {
+            v["source_mint"] =
+                json!(choice_wallet_policy::solana_token_mint(r, ctx, source).map(|m| base58::encode(&m)));
+        }
+    }
+}
+
 fn solana_display(cluster: &SolanaChain, r: &choice_wallet_solana::Read, signer: &[u8; 32]) -> Value {
     use choice_wallet_solana::message::Version;
     let b58 = |k: &[u8; 32]| base58::encode(k);
@@ -102,6 +118,25 @@ fn solana_step(cluster: &SolanaChain, r: &choice_wallet_solana::Read, s: &choice
             "type": "create_account", "from": b58(from), "account": b58(account), "lamports": lamports.to_string(),
             "space": space.to_string(), "owner": b58(owner), "owner_name": program::name(owner),
         }),
+        I::CreateAccountWithSeed {
+            from,
+            account,
+            base,
+            lamports,
+            space,
+            owner,
+        } => json!({
+            "type": "create_account_with_seed", "from": b58(from), "account": b58(account), "base": b58(base),
+            "lamports": lamports.to_string(), "space": space.to_string(), "owner": b58(owner), "owner_name": program::name(owner),
+        }),
+        I::TransferWithSeed {
+            from,
+            base,
+            to,
+            lamports,
+        } => {
+            json!({ "type": "transfer_with_seed", "from": b58(from), "base": b58(base), "to": b58(to), "lamports": lamports.to_string() })
+        }
         I::Assign { account, owner } => {
             json!({ "type": "assign", "account": b58(account), "owner": b58(owner), "owner_name": program::name(owner) })
         }
@@ -213,11 +248,11 @@ fn solana_step(cluster: &SolanaChain, r: &choice_wallet_solana::Read, s: &choice
         }
         I::StakeAuthorize {
             stake,
-            authority,
+            signers,
             new_authority,
             kind,
         } => json!({
-            "type": "stake_authorize", "stake": b58(stake), "authority": b58(authority),
+            "type": "stake_authorize", "stake": b58(stake), "signers": signers.iter().map(b58).collect::<Vec<_>>(),
             "new_authority": b58(new_authority), "authority_kind": if *kind == 1 { "withdrawer" } else { "staker" },
         }),
         I::StakeWithdraw {

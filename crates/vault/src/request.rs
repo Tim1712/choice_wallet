@@ -224,6 +224,17 @@ impl Checked {
         }
     }
 
+    /// What the approval screen shows, with what the host's context adds: a plain SPL
+    /// `Transfer` names no token, so the one the rules count it as (its source account's) is
+    /// shown with it.
+    pub(crate) fn display_with(&self, ctx: &Context) -> Value {
+        let mut d = self.display.clone();
+        if let Kind::SolanaTx { read, .. } = &self.kind {
+            solana::source_mints(&mut d, read, ctx);
+        }
+        d
+    }
+
     /// Signed with the account's Solana key rather than its secp256k1 one.
     pub(crate) fn solana(&self) -> bool {
         matches!(self.kind, Kind::SolanaTx { .. } | Kind::SolanaMessage { .. })

@@ -96,7 +96,9 @@ fn close_authority(who: &str, mint: Option<&str>, params: serde_json::Value) -> 
     }
 }
 
-fn token_mint(r: &Read, ctx: &Context, account: &Pubkey) -> Option<Pubkey> {
+/// The token of `account`, a token account: as the transaction opens it, or as the host names
+/// it. The rules read a plain `Transfer`'s token (it names none) from it.
+pub fn token_mint(r: &Read, ctx: &Context, account: &Pubkey) -> Option<Pubkey> {
     r.steps
         .iter()
         .find_map(|s| match &s.instruction {
@@ -155,6 +157,33 @@ pub fn solana_transaction(r: &Read, signer: &Pubkey, c: &Cctp, ctx: &Context) ->
                 }
                 if account == signer {
                     out.push(assign_away(owner));
+                }
+            }
+            Instruction::CreateAccountWithSeed { from, lamports, .. } => {
+                if from == signer {
+                    sol_out = sol_out.saturating_add(*lamports);
+                }
+            }
+            // SOL out of an account derived from the signer, which it alone signs for: its SOL.
+            Instruction::TransferWithSeed {
+                from,
+                base,
+                to,
+                lamports,
+            } => {
+                if base == signer && to != signer {
+                    sol_out = sol_out.saturating_add(*lamports);
+                    recipient(ctx, &b58(to), None, &mut out);
+                    out.push(finding(
+                        "solana_seed_transfer",
+                        Level::Amber,
+                        format!(
+                            "Takes SOL out of {}, an account derived from this one, to {}.",
+                            short(&b58(from)),
+                            short(&b58(to))
+                        ),
+                        json!({ "account": b58(from), "to": b58(to), "lamports": lamports.to_string() }),
+                    ));
                 }
             }
             Instruction::Assign { account, owner } => {
@@ -335,15 +364,29 @@ pub fn solana_transaction(r: &Read, signer: &Pubkey, c: &Cctp, ctx: &Context) ->
                 ..
             } => {
                 if owner == signer && destination != signer {
-                    out.push(finding(
-                        "solana_close_elsewhere",
-                        Level::Amber,
-                        format!(
-                            "Closes a token account and sends its SOL to {}.",
-                            short(&b58(destination))
-                        ),
-                        json!({ "account": b58(account), "destination": b58(destination) }),
-                    ));
+                    let params = json!({ "account": b58(account), "destination": b58(destination) });
+                    let to = short(&b58(destination));
+                    // A wrapped-SOL account closes with its balance, which is all SOL: it goes
+                    // to the destination whole. Any other token account closes only empty, and
+                    // gives its rent. One whose token the wallet can't tell may be wrapped SOL.
+                    let mint = token_mint(r, ctx, account).map(|m| b58(&m));
+                    out.push(if mint.as_deref().is_none_or(|m| NATIVE_MINTS.contains(&m)) {
+                        let mut f = finding(
+                            "solana_close_elsewhere",
+                            Level::Red,
+                            format!("Closes a token account that may hold wrapped SOL and sends all of it to {to}."),
+                            params,
+                        );
+                        f.confirm = Some("GIVE");
+                        f
+                    } else {
+                        finding(
+                            "solana_close_elsewhere",
+                            Level::Amber,
+                            format!("Closes a token account and sends its SOL to {to}."),
+                            params,
+                        )
+                    });
                 }
             }
             Instruction::TokenBurn {
@@ -379,13 +422,15 @@ pub fn solana_transaction(r: &Read, signer: &Pubkey, c: &Cctp, ctx: &Context) ->
                     ));
                 }
             }
+            // The program takes the current authority from any signing account of the
+            // instruction: the signer among them may be it.
             Instruction::StakeAuthorize {
                 stake,
-                authority,
+                signers,
                 new_authority,
                 kind,
             } => {
-                if authority != signer || new_authority == signer {
+                if !signers.contains(signer) || new_authority == signer {
                     continue;
                 }
                 out.push(stake_handover(
@@ -428,6 +473,35 @@ pub fn solana_transaction(r: &Read, signer: &Pubkey, c: &Cctp, ctx: &Context) ->
                     unread.push(*program);
                 }
             }
+        }
+    }
+
+    // Without a simulation that ran, nothing backs what an instruction the vault can't read
+    // does with the account it is handed, which signs for it: a site can make the simulation
+    // fail (or the RPC can be down) and have it hand anything over.
+    if !ctx.solana_simulated {
+        let mut blind: Vec<Pubkey> = Vec::new();
+        for s in &r.steps {
+            let unread = matches!(
+                s.instruction,
+                Instruction::Other { .. } | Instruction::TokenOther { .. } | Instruction::Unreadable { .. }
+            );
+            if unread && s.accounts.iter().any(|a| a.key == *signer) && !blind.contains(&s.program) {
+                blind.push(s.program);
+            }
+        }
+        if !blind.is_empty() {
+            let names = blind.iter().map(program_name).collect::<Vec<_>>().join(", ");
+            let mut f = finding(
+                "solana_unread_unsimulated",
+                Level::Red,
+                format!(
+                    "It couldn't be simulated, so nothing shows what {names} would do with this account, which it signs for. It could take what's in it."
+                ),
+                json!({ "programs": blind.iter().map(b58).collect::<Vec<_>>() }),
+            );
+            f.confirm = Some("GIVE");
+            out.push(f);
         }
     }
 
@@ -1052,7 +1126,7 @@ mod tests {
         };
         let authorize = |kind, to| Instruction::StakeAuthorize {
             stake,
-            authority: ME,
+            signers: vec![ME],
             new_authority: to,
             kind,
         };
@@ -1350,5 +1424,181 @@ mod tests {
         let mut nonce = r.clone();
         nonce.durable_nonce = true;
         assert!(rules(&nonce, &MAINNET, &Context::default()).contains(&"solana_durable_nonce"));
+    }
+
+    /// Review 3: Stake's Authorize takes the current authority from any signing account of the
+    /// instruction (the program collects every signer; account 2 is unused). The signer put
+    /// at index 3 (the custodian's slot) with anything at index 2 hands its withdrawer over,
+    /// and the instruction alone raises nothing.
+    #[test]
+    fn review_stake_authorize_with_signer_out_of_place() {
+        use choice_wallet_solana::program::STAKE;
+        let stake_acct = [7u8; 32];
+        let clock = base58::decode32("SysvarC1ock11111111111111111111111111111111").unwrap();
+        let dummy = [9u8; 32];
+        let mut m = vec![1u8, 0, 3, 5];
+        for k in [ME, stake_acct, clock, dummy, STAKE.key()] {
+            m.extend_from_slice(&k);
+        }
+        m.extend_from_slice(&[0x11; 32]); // blockhash
+        m.push(1); // one instruction
+        m.push(4); // Stake
+        m.extend_from_slice(&[4, 1, 2, 3, 0]); // [stake, clock, dummy, ME]
+        let mut data = 1u32.to_le_bytes().to_vec();
+        data.extend_from_slice(&THEM);
+        data.extend_from_slice(&1u32.to_le_bytes()); // withdrawer
+        m.push(data.len() as u8);
+        m.extend_from_slice(&data);
+        let r = choice_wallet_solana::read(&m, &[]).unwrap();
+        let a = solana_transaction(&r, &ME, &MAINNET, &Context::default());
+        assert_eq!(
+            a.level,
+            Level::Red,
+            "withdrawer handed to THEM, rules {:?}",
+            rules_of(&a)
+        );
+    }
+
+    /// Review 3: AuthorizeChecked likewise: [stake, clock, anything, new authority (signs), ME (signs)].
+    #[test]
+    fn review_stake_authorize_checked_with_signer_out_of_place() {
+        use choice_wallet_solana::program::STAKE;
+        let stake_acct = [7u8; 32];
+        let clock = base58::decode32("SysvarC1ock11111111111111111111111111111111").unwrap();
+        let dummy = [9u8; 32];
+        let mut m = vec![2u8, 1, 3, 6];
+        for k in [ME, THEM, stake_acct, clock, dummy, STAKE.key()] {
+            m.extend_from_slice(&k);
+        }
+        m.extend_from_slice(&[0x11; 32]);
+        m.push(1);
+        m.push(5);
+        m.extend_from_slice(&[5, 2, 3, 4, 1, 0]);
+        let mut data = 10u32.to_le_bytes().to_vec();
+        data.extend_from_slice(&1u32.to_le_bytes());
+        m.push(data.len() as u8);
+        m.extend_from_slice(&data);
+        let r = choice_wallet_solana::read(&m, &[]).unwrap();
+        let a = solana_transaction(&r, &ME, &MAINNET, &Context::default());
+        assert_eq!(a.level, Level::Red);
+    }
+
+    /// Review 3: closing a wrapped-SOL account to someone else sends its whole balance.
+    #[test]
+    fn review_close_wrapped_sol_elsewhere() {
+        let r = tx(
+            &[ME],
+            vec![Instruction::TokenClose {
+                program: TOKEN.key(),
+                account: [3; 32],
+                destination: THEM,
+                owner: ME,
+            }],
+        );
+        let ctx = Context {
+            solana_token_accounts: [(
+                b58(&[3; 32]),
+                SolanaTokenAccount {
+                    owner: b58(&ME),
+                    mint: "So11111111111111111111111111111111111111112".into(),
+                },
+            )]
+            .into(),
+            ..Default::default()
+        };
+        let a = solana_transaction(&r, &ME, &MAINNET, &ctx);
+        assert_eq!(a.level, Level::Red);
+        assert_eq!(a.confirm, Some("GIVE"));
+        // Whose token the wallet can't tell: it may be wrapped SOL.
+        let a = solana_transaction(&r, &ME, &MAINNET, &Context::default());
+        assert_eq!((a.level, a.confirm), (Level::Red, Some("GIVE")));
+        // Any other token closes only empty: its rent goes.
+        let usdc = Context {
+            solana_token_accounts: [(
+                b58(&[3; 32]),
+                SolanaTokenAccount {
+                    owner: b58(&ME),
+                    mint: "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v".into(),
+                },
+            )]
+            .into(),
+            ..Default::default()
+        };
+        let a = solana_transaction(&r, &ME, &MAINNET, &usdc);
+        assert_eq!((a.level, a.confirm), (Level::Amber, None));
+    }
+
+    /// System's seed instructions are read: SOL leaving the signer, or an account derived from
+    /// it, to someone else is a send.
+    #[test]
+    fn seed_instructions_are_read() {
+        let ctx = Context {
+            balances: [("native".to_owned(), "11000000000".to_owned())].into(),
+            ..Default::default()
+        };
+        let send = |base| {
+            tx(
+                &[ME],
+                vec![Instruction::TransferWithSeed {
+                    from: [5; 32],
+                    base,
+                    to: THEM,
+                    lamports: 10_000_000_000,
+                }],
+            )
+        };
+        let mine = rules(&send(ME), &MAINNET, &ctx);
+        assert!(mine.contains(&"solana_seed_transfer"), "{mine:?}");
+        assert!(mine.contains(&"most_of_balance"), "{mine:?}");
+        assert!(!mine.contains(&"solana_unread_program"), "{mine:?}");
+        assert!(rules(&send(THEM), &MAINNET, &ctx).is_empty());
+        let create = tx(
+            &[ME],
+            vec![Instruction::CreateAccountWithSeed {
+                from: ME,
+                account: [5; 32],
+                base: ME,
+                lamports: 10_000_000_000,
+                space: 0,
+                owner: [6; 32],
+            }],
+        );
+        let r = rules(&create, &MAINNET, &ctx);
+        assert!(
+            r.contains(&"most_of_balance") && !r.contains(&"solana_unread_program"),
+            "{r:?}"
+        );
+    }
+
+    /// A program the vault can't read, handed the signer, with no simulation that ran behind
+    /// it (failed, or the RPC down): red with GIVE. A simulation that ran, or a program that
+    /// isn't handed the signer, leaves it amber.
+    #[test]
+    fn an_unread_program_given_the_signer_without_a_simulation_is_red() {
+        let step = |accounts: Vec<Pubkey>| {
+            let mut r = tx(&[ME], vec![Instruction::Other { program: [0x42; 32] }]);
+            r.steps[0].program = [0x42; 32];
+            r.steps[0].accounts = accounts
+                .into_iter()
+                .map(|key| Account {
+                    key,
+                    signer: key == ME,
+                    writable: true,
+                    table: None,
+                })
+                .collect();
+            r
+        };
+        let simulated = Context {
+            solana_simulated: true,
+            ..Default::default()
+        };
+        let a = solana_transaction(&step(vec![THEM, ME]), &ME, &MAINNET, &Context::default());
+        assert_eq!((a.level, a.confirm), (Level::Red, Some("GIVE")));
+        assert!(rules_of(&a).contains(&"solana_unread_unsimulated"));
+        let a = solana_transaction(&step(vec![THEM, ME]), &ME, &MAINNET, &simulated);
+        assert_eq!((a.level, a.confirm), (Level::Amber, None));
+        let a = solana_transaction(&step(vec![THEM]), &ME, &MAINNET, &Context::default());
+        assert_eq!((a.level, a.confirm), (Level::Amber, None));
     }
 }

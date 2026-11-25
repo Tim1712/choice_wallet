@@ -92,6 +92,8 @@ export type Shown = {
    *  unused gas). On another chain, in its coin (`native:<chain>`). */
   fee: Coin[];
   memo: string;
+  /** For Solana: every memo instruction's text, in order (a transaction can carry several). */
+  memos?: string[];
   evm: boolean;
   /** For Cosmos: the messages a send or conversion card above stands for, by index. Any
    *  other message is shown in full. */
@@ -313,7 +315,7 @@ const short = (a: string) => (a.length > 12 ? `${a.slice(0, 4)}…${a.slice(-4)}
  *  instruction already says, is the allowance the transaction leaves: its card replaces
  *  the instruction's for that delegate and token (run-2 C2). */
 function solanaShown(d: SolanaDisplay, cluster: string, findings: Finding[]): Shown {
-  const out: Shown = { sends: [], nfts: [], moves: [], swaps: [], bridges: [], mints: [], approvals: [], converts: [], stakes: [], revokes: [], votes: [], others: [], fee: [{ denom: "sol", amount: d.fee.total }], memo: "", evm: false };
+  const out: Shown = { sends: [], nfts: [], moves: [], swaps: [], bridges: [], mints: [], approvals: [], converts: [], stakes: [], revokes: [], votes: [], others: [], fee: [{ denom: "sol", amount: d.fee.total }], memo: "", memos: [], evm: false };
   /** The token account an instruction's approval card is for. */
   const approvedFrom = new Map<ApprovalLine, string>();
   for (const s of d.instructions) {
@@ -325,10 +327,21 @@ function solanaShown(d: SolanaDisplay, cluster: string, findings: Finding[]): Sh
         if (s.from === d.signer) out.sends.push({ coins: [{ denom: "sol", amount: s.lamports }], to: s.to });
         else out.others.push(`Moves SOL from ${short(s.from)} to ${short(s.to)}`);
         break;
-      case "token_transfer":
-        if (s.authority === d.signer && s.mint) out.sends.push({ coins: [{ denom: `spl:${s.mint}`, amount: s.amount }], to: s.destination_owner ?? s.destination });
-        else out.others.push(`Moves tokens to ${short(s.destination_owner ?? s.destination)}`);
+      case "transfer_with_seed":
+        // From an account derived from this one, which only it signs for: its SOL, sent.
+        if (s.base === d.signer && s.to !== d.signer) out.sends.push({ coins: [{ denom: "sol", amount: s.lamports }], to: s.to });
+        else out.others.push(`Moves SOL from ${short(s.from)} to ${s.to === d.signer ? "this account" : short(s.to)}`);
         break;
+      case "token_transfer": {
+        // A plain Transfer names no token: the one its source account holds, as the vault read it.
+        const mint = s.mint ?? s.source_mint ?? null;
+        const to = s.destination_owner ?? s.destination;
+        if (s.authority === d.signer && mint) out.sends.push({ coins: [{ denom: `spl:${mint}`, amount: s.amount }], to });
+        // Signed for by this account, whatever the token: its amount is always shown.
+        else if (s.authority === d.signer) out.others.push(`Sends ${s.amount} base units of an unnamed token from your account ${short(s.source)} to ${short(to)}`);
+        else out.others.push(`Moves tokens to ${short(to)}`);
+        break;
+      }
       case "create_token_account":
         if (s.owner !== d.signer) out.others.push(`Opens ${short(s.owner)}'s account for this token, paying its rent`);
         break;
@@ -359,7 +372,7 @@ function solanaShown(d: SolanaDisplay, cluster: string, findings: Finding[]): Sh
         out.others.push("Takes back the rent of a finished bridge transfer's record");
         break;
       case "memo":
-        out.memo = s.text ?? `0x${s.hex}`;
+        out.memos!.push(s.text ?? `0x${s.hex}`);
         break;
       case "assign":
         out.others.push(`Hands ${short(s.account)} to ${s.owner_name ?? short(s.owner)}`);
