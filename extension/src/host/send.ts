@@ -658,8 +658,10 @@ export function createSender(d: SendDeps) {
       const burns = spec.burns ?? 0n;
       const coin = fee + (plain ? amount : 0n) + (source.gasIsUsdc ? burns * 10n ** 12n : 0n);
       if (coin > held) return fail("gas", plain ? `Not enough ${source.symbol} on ${source.name} for that and the fee.` : `Not enough ${source.symbol} on ${source.name} for the fee.`);
-      // A send's recipient is checked against the address book like any other.
-      const facts = spec.token || plain ? await d.riskFacts(network, spec.to) : {};
+      // A send's recipient is checked against the address book like any other; a call (a
+      // bridge burn) gets the address book too, so a burn to another of the user's accounts
+      // is named as theirs, as on Injective.
+      const facts = await d.riskFacts(network, spec.token || plain ? spec.to : null);
       const from_site = (await d.endpointFrom?.(network, source.key)) ?? null;
       const decoded = await d.vault<Pick<SendReview, "digest" | "display" | "risk">>("decode", {
         request: built.result.request,
