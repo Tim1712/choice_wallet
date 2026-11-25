@@ -324,7 +324,21 @@ export type SolanaStep = { program: string; program_name: string | null } & (
   | { type: "nonce_authorize"; nonce: string; new_authority: string; signers: string[] }
   | { type: "advance_nonce"; nonce: string; authority: string }
   | { type: "compute_budget"; unit_limit?: number; unit_price?: string }
-  | { type: "token_transfer"; source: string; destination: string; destination_owner: string | null; authority: string; amount: string; mint: string | null; decimals: number | null; usdc: boolean }
+  | {
+      type: "token_transfer";
+      source: string;
+      destination: string;
+      destination_owner: string | null;
+      authority: string;
+      amount: string;
+      /** The token, when the instruction names it (TransferChecked). */
+      mint: string | null;
+      decimals: number | null;
+      usdc: boolean;
+      /** A plain Transfer's token, as the vault's rules read it from the source account (the
+       *  transaction opening it, or the host's lookup); null when neither names it. */
+      source_mint?: string | null;
+    }
   | { type: "token_approve"; source: string; delegate: string; owner: string; amount: string; mint: string | null; decimals: number | null }
   | { type: "token_revoke"; source: string; owner: string }
   | { type: "token_set_authority"; account: string; authority_kind: number; new_authority: string | null; current: string }

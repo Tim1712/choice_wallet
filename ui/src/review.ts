@@ -330,10 +330,16 @@ function solanaShown(d: SolanaDisplay, cluster: string, findings: Finding[]): Sh
         if (s.base === d.signer && s.to !== d.signer) out.sends.push({ coins: [{ denom: "sol", amount: s.lamports }], to: s.to });
         else out.others.push(`Moves SOL from ${short(s.from)} to ${s.to === d.signer ? "this account" : short(s.to)}`);
         break;
-      case "token_transfer":
-        if (s.authority === d.signer && s.mint) out.sends.push({ coins: [{ denom: `spl:${s.mint}`, amount: s.amount }], to: s.destination_owner ?? s.destination });
-        else out.others.push(`Moves tokens to ${short(s.destination_owner ?? s.destination)}`);
+      case "token_transfer": {
+        // A plain Transfer names no token: the one its source account holds, as the vault read it.
+        const mint = s.mint ?? s.source_mint ?? null;
+        const to = s.destination_owner ?? s.destination;
+        if (s.authority === d.signer && mint) out.sends.push({ coins: [{ denom: `spl:${mint}`, amount: s.amount }], to });
+        // Signed for by this account, whatever the token: its amount is always shown.
+        else if (s.authority === d.signer) out.others.push(`Sends ${s.amount} base units of an unnamed token from your account ${short(s.source)} to ${short(to)}`);
+        else out.others.push(`Moves tokens to ${short(to)}`);
         break;
+      }
       case "create_token_account":
         if (s.owner !== d.signer) out.others.push(`Opens ${short(s.owner)}'s account for this token, paying its rent`);
         break;

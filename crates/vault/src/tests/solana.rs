@@ -219,3 +219,37 @@ fn solana_messages_and_devices() {
         "device_unsupported"
     );
 }
+
+/// A plain SPL Transfer names no token: the display names the one its source account holds,
+/// as the rules read it (the host's lookup here), so the review can show the amount as it.
+#[test]
+fn a_plain_token_transfer_shows_its_source_accounts_token() {
+    let v = solana_vectors();
+    let owner = v["owner"].as_str().unwrap();
+    let usdc = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v";
+    let (source, dest) = ([7u8; 32], [8u8; 32]);
+    let mut m = vec![1u8, 0, 1, 4];
+    m.extend_from_slice(&choice_wallet_core::base58::decode32(owner).unwrap());
+    m.extend_from_slice(&source);
+    m.extend_from_slice(&dest);
+    m.extend_from_slice(&choice_wallet_core::base58::decode32("TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA").unwrap());
+    m.extend_from_slice(&[0x11; 32]);
+    m.extend_from_slice(&[1, 3, 3, 1, 2, 0, 9, 3]);
+    m.extend_from_slice(&250_000u64.to_le_bytes());
+    let request =
+        json!({ "solana_transaction": { "chain": SOLANA_MAINNET, "signer": owner, "message": hex::encode(&m) } });
+    let source = choice_wallet_core::base58::encode(&source);
+    let ctx = json!({ "solana_token_accounts": { source.clone(): { "owner": owner, "mint": usdc } } });
+    let d = ok("decode", json!({ "request": request, "context": ctx }));
+    let step = &d["display"]["instructions"][0];
+    assert_eq!(
+        (
+            step["type"].as_str(),
+            step["mint"].as_str(),
+            step["source_mint"].as_str()
+        ),
+        (Some("token_transfer"), None, Some(usdc))
+    );
+    let d = ok("decode", json!({ "request": request }));
+    assert!(d["display"]["instructions"][0]["source_mint"].is_null());
+}

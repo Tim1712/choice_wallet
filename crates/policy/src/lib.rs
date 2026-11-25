@@ -37,7 +37,7 @@ use serde_json::Value;
 pub use cosmos::{CosmosFee, cosmos};
 pub use evm::{EvmSide, evm_transaction};
 pub use message::{arbitrary_message, personal_message, solana_message};
-pub use solana::solana_transaction;
+pub use solana::{solana_transaction, token_mint as solana_token_mint};
 pub use typed::typed_data;
 
 /// How risky something is. Ordered: `Info < Amber < Red < Blocked`.

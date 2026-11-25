@@ -27,3 +27,13 @@ test("SOL out of an account derived from the signer is a send; from anyone else'
   assert.deepEqual(theirs.sends, []);
   assert.equal(theirs.others.length, 1);
 });
+
+test("a plain SPL Transfer the signer authorises always shows its amount: as its source account's token, or unnamed", () => {
+  const TOKEN = { program: "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA", program_name: "Token" };
+  const transfer = (source_mint: string | null): SolanaStep => ({ ...TOKEN, type: "token_transfer", source: "mySourceTokenAccount11111111111111", destination: "attackerTokenAccount1111111111111", destination_owner: null, authority: SIGNER, amount: "250000000000", mint: null, decimals: null, usdc: false, source_mint });
+  const named = shown(display([transfer("EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v")]), "mainnet");
+  assert.deepEqual(named.sends, [{ coins: [{ denom: "spl:EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v", amount: "250000000000" }], to: "attackerTokenAccount1111111111111" }]);
+  const unnamed = shown(display([transfer(null)]), "mainnet");
+  assert.deepEqual(unnamed.sends, []);
+  assert.deepEqual(unnamed.others, ["Sends 250000000000 base units of an unnamed token from your account mySo…1111 to atta…1111"]);
+});

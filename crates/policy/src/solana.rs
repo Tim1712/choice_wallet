@@ -96,7 +96,9 @@ fn close_authority(who: &str, mint: Option<&str>, params: serde_json::Value) -> 
     }
 }
 
-fn token_mint(r: &Read, ctx: &Context, account: &Pubkey) -> Option<Pubkey> {
+/// The token of `account`, a token account: as the transaction opens it, or as the host names
+/// it. The rules read a plain `Transfer`'s token (it names none) from it.
+pub fn token_mint(r: &Read, ctx: &Context, account: &Pubkey) -> Option<Pubkey> {
     r.steps
         .iter()
         .find_map(|s| match &s.instruction {
