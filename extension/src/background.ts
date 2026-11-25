@@ -79,11 +79,13 @@ const service = createService({
     void chrome.alarms.clear(AUTO_LOCK);
   },
   async openWindow(id) {
-    // Top right of the window the user is in, like the toolbar popup.
+    // Top right of the window the user is in, like the toolbar popup, a little off each
+    // time, so a page can't know where the main button will be (ui/src/arm.ts).
     const near = await chrome.windows.getLastFocused().catch(() => undefined);
+    const [dx, dy] = crypto.getRandomValues(new Uint8Array(2));
     const place =
       near?.left !== undefined && near.top !== undefined && near.width !== undefined
-        ? { left: Math.max(0, near.left + near.width - APPROVAL.width - 16), top: near.top + 72 }
+        ? { left: Math.max(0, near.left + near.width - APPROVAL.width - 16 - (dx! % 49)), top: near.top + 72 + (dy! % 65) }
         : {};
     const w = await chrome.windows.create({ url: chrome.runtime.getURL(`popup.html?approve=${id}`), type: "popup", focused: true, ...APPROVAL, ...place });
     return w?.id;

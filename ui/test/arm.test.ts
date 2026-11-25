@@ -11,7 +11,8 @@ function fakeWindow() {
   let front = true;
   let timers: { at: number; f: () => void }[] = [];
   const listeners = new Set<() => void>();
-  const pressed = new Set<(id?: string) => void>();
+  const pressed = new Set<(id?: string, mouse?: boolean) => void>();
+  const entering = new Set<() => void>();
   const released = new Set<(id: string) => void>();
   const env: ArmEnv = {
     front: () => front,
@@ -32,6 +33,10 @@ function fakeWindow() {
       timers.push(t);
       return () => (timers = timers.filter((x) => x !== t));
     },
+    enters(f) {
+      entering.add(f);
+      return () => entering.delete(f);
+    },
   };
   return {
     env,
@@ -49,8 +54,12 @@ function fakeWindow() {
     press() {
       for (const f of pressed) f();
     },
-    down(id: string) {
-      for (const f of pressed) f(id);
+    down(id: string, mouse = false) {
+      for (const f of pressed) f(id, mouse);
+    },
+    /** A mouse comes onto the button. */
+    enter() {
+      for (const f of entering) f();
     },
     up(id: string) {
       for (const f of released) f(id);
@@ -159,4 +168,47 @@ test("a stream of presses keeps the button disarmed until it stops", () => {
   w.press();
   assert.equal(armed, true);
   stop();
+});
+
+// Review-3: a click a second, begun on the page and aimed where the window opens, waits out
+// ARM_MS between clicks. The mouse never came onto the button, so its clicks don't count; a
+// user reaching for the button does, and keys work as before.
+test("a slow click stream begun on the page never lands on an armed button", () => {
+  const w = fakeWindow();
+  let armed = false;
+  const stop = arm(true, w.env, (v) => (armed = v));
+  for (let i = 0; i < 10; i++) {
+    // The click meant for the page: down, up, then a second's wait.
+    w.down("pointer:1", true);
+    assert.equal(armed, false, `click ${i} lands on a disarmed button`);
+    w.advance(100);
+    w.up("pointer:1");
+    w.advance(ARM_MS + 100);
+  }
+  // The user moves onto the button: the next click counts.
+  assert.equal(armed, true);
+  w.enter();
+  w.down("pointer:1", true);
+  assert.equal(armed, true);
+  w.up("pointer:1");
+  stop();
+  // Keys need no move: Enter on the armed button acts.
+  const again = arm(true, w.env, (v) => (armed = v));
+  w.advance(ARM_MS);
+  w.down("key:Enter");
+  assert.equal(armed, true);
+  w.up("key:Enter");
+  again();
+  // A move onto the button before it armed doesn't count: only one after.
+  const third = arm(true, w.env, (v) => (armed = v));
+  w.enter();
+  w.advance(ARM_MS);
+  w.down("pointer:1", true);
+  assert.equal(armed, false);
+  w.up("pointer:1");
+  w.advance(ARM_MS);
+  w.enter();
+  w.down("pointer:1", true);
+  assert.equal(armed, true);
+  third();
 });
