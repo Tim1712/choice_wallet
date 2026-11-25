@@ -321,7 +321,8 @@ mod tests {
     }
 
     /// A durable nonce's advance with bytes after its kind: the runtime still takes the
-    /// message for a durable nonce one (it reads only the first four), and so does the vault.
+    /// message for a durable nonce one (it reads only the first four), and so does the vault;
+    /// the instruction itself stays unreadable.
     #[test]
     fn a_durable_nonce_with_trailing_bytes() {
         let (me, nonce, sysvar) = ([1u8; 32], [2u8; 32], [3u8; 32]);
@@ -336,14 +337,21 @@ mod tests {
             m.extend_from_slice(data);
             read(&m, &[]).unwrap()
         };
-        for data in [&[4u8, 0, 0, 0][..], &[4, 0, 0, 0, 9, 9]] {
-            let r = advance(data);
-            assert!(r.durable_nonce, "{data:?}");
-            assert_eq!(
-                r.steps[0].instruction,
-                Instruction::AdvanceNonce { nonce, authority: me }
-            );
-        }
+        let exact = advance(&[4u8, 0, 0, 0]);
+        assert!(exact.durable_nonce);
+        assert_eq!(
+            exact.steps[0].instruction,
+            Instruction::AdvanceNonce { nonce, authority: me }
+        );
+        // Trailing bytes: still a durable nonce (so the warning shows), but not read as a
+        // plain advance: an odd shape no wallet builds stays unreadable.
+        let odd = advance(&[4, 0, 0, 0, 9, 9]);
+        assert!(odd.durable_nonce);
+        assert!(
+            matches!(odd.steps[0].instruction, Instruction::Unreadable { .. }),
+            "{:?}",
+            odd.steps[0].instruction
+        );
         assert!(!advance(&[4, 0, 0]).durable_nonce);
     }
 
