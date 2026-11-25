@@ -241,6 +241,16 @@ export function createApprovals(sender: Sender, chains: ApprovalChains) {
       const erc20 = perms.erc20.map((e) => ({ ...e, token: evmDenom(e.token) }));
       const permit2 = await permit2Rows(network, "", evm0x, perms.permit2);
       const tokens = await sender.tokensFor(network, [...cw20.map((c) => c.token), ...erc20.map((e) => e.token), ...permit2.map((p) => p.token)]);
+      // What the account holds of them (and of INJ, for fee allowances), where the balance
+      // list read it: an allowance below that is amber on the screen, every other one red.
+      // An `erc20:` bank denom is the ERC20 itself.
+      const wanted = new Set([net.feeDenom, ...cw20.map((c) => c.token), ...erc20.map((e) => e.token), ...permit2.map((p) => p.token)]);
+      const balances: Record<string, string> = {};
+      for (const b of held.ok ? held.result.balances : []) {
+        if (b.chain) continue;
+        const key = b.denom.startsWith("erc20:") ? `evm:${b.denom.slice(6).toLowerCase()}` : b.denom;
+        if (wanted.has(key)) balances[key] = b.amount;
+      }
       return {
         ok: true,
         result: {
@@ -256,6 +266,7 @@ export function createApprovals(sender: Sender, chains: ApprovalChains) {
           permit2,
           chains: await checkable(network),
           tokens,
+          balances,
           names: contractNames(net, true),
           unchecked,
           ...(perms.indexDown ? { evmIndexDown: true as const } : {}),

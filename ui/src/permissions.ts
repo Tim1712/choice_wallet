@@ -49,3 +49,25 @@ export function permissionName(msgTypeUrl: string): string {
 export function canMoveFunds(msgTypeUrl: string | null): boolean {
   return msgTypeUrl === null || !(HARMLESS.has(msgTypeUrl) || CANCELS.test(msgTypeUrl));
 }
+
+/** Allowances from 2^128 up read as unlimited, as in Activity. */
+export const UNLIMITED = 2n ** 128n;
+
+/** How a token allowance of `amount` is shown, given what the account holds of the token
+ *  (`held`; undefined when the wallet didn't read it). Every allowance can move funds: red
+ *  when it can take all there is (unlimited, at least the balance, or a balance the wallet
+ *  doesn't know), amber when it is capped below a balance the wallet read. */
+export function allowanceLevel(amount: string, held: string | undefined): "red" | "amber" {
+  const a = BigInt(amount);
+  if (a >= UNLIMITED || held === undefined) return "red";
+  return a >= BigInt(held) ? "red" : "amber";
+}
+
+/** A fee allowance (`limit` its spend limit, empty for none): red with no limit, or a limit
+ *  in the fee coin that covers what the account holds of it (or doesn't know); amber when
+ *  capped below it, or limited to other coins only. */
+export function feeAllowanceLevel(limit: readonly { denom: string; amount: string }[], feeDenom: string, held: string | undefined): "red" | "amber" {
+  if (limit.length === 0) return "red";
+  const inFee = limit.find((c) => c.denom === feeDenom);
+  return inFee ? allowanceLevel(inFee.amount, held) : "amber";
+}
