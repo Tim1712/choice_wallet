@@ -23,6 +23,14 @@ pub const LAMPORTS_PER_SIGNATURE: u64 = 5_000;
 const DEFAULT_UNITS_PER_INSTRUCTION: u64 = 200_000;
 /// A transaction's most compute units.
 const MAX_UNITS: u64 = 1_400_000;
+/// The signature-check precompiles (Ed25519, secp256k1, secp256r1). The runtime charges each
+/// signature an instruction to one of them checks (its first data byte says how many) as it
+/// does the transaction's own.
+const PRECOMPILES: [&str; 3] = [
+    "Ed25519SigVerify111111111111111111111111111",
+    "KeccakSecp256k11111111111111111111111111111",
+    "Secp256r1SigVerify1111111111111111111111111",
+];
 
 /// One instruction, read.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -40,7 +48,7 @@ pub struct Step {
 /// What a transaction may cost its fee payer, in lamports.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Fee {
-    /// 5,000 per signature.
+    /// 5,000 per signature: the transaction's own, and those its precompile instructions check.
     pub base: u64,
     /// The priority fee: the compute limit times its price (rounded up).
     pub priority: u64,
@@ -125,8 +133,17 @@ pub fn read(bytes: &[u8], tables: &[(Pubkey, Vec<Pubkey>)]) -> Result<Read, Mess
         let micro = u128::from(units) * u128::from(p);
         u64::try_from(micro.div_ceil(1_000_000)).unwrap_or(u64::MAX)
     });
+    let precompiles: Vec<Pubkey> = PRECOMPILES
+        .iter()
+        .map(|p| choice_wallet_core::base58::decode32(p).expect("pinned program IDs are valid"))
+        .collect();
+    let checked: u64 = steps
+        .iter()
+        .filter(|s| precompiles.contains(&s.program))
+        .map(|s| u64::from(s.data.first().copied().unwrap_or(0)))
+        .sum();
     let fee = Fee {
-        base: LAMPORTS_PER_SIGNATURE * u64::from(message.header.required_signatures),
+        base: LAMPORTS_PER_SIGNATURE * (u64::from(message.header.required_signatures) + checked),
         priority,
         unit_limit: limit,
         unit_price: price,
@@ -328,5 +345,26 @@ mod tests {
             );
         }
         assert!(!advance(&[4, 0, 0]).durable_nonce);
+    }
+
+    /// The runtime charges the signatures a precompile instruction checks (its first data
+    /// byte) as it does the transaction's own.
+    #[test]
+    fn precompile_signatures_are_in_the_fee() {
+        let me = [1u8; 32];
+        let ed25519 = choice_wallet_core::base58::decode32(PRECOMPILES[0]).unwrap();
+        let secp = choice_wallet_core::base58::decode32(PRECOMPILES[1]).unwrap();
+        let mut m = vec![1u8, 0, 2, 3];
+        for k in [me, ed25519, secp] {
+            m.extend_from_slice(&k);
+        }
+        m.extend_from_slice(&[0x11; 32]);
+        m.push(3);
+        for (program, data) in [(1u8, &[3u8, 0][..]), (2, &[2]), (1, &[])] {
+            m.extend_from_slice(&[program, 0, data.len() as u8]);
+            m.extend_from_slice(data);
+        }
+        let r = read(&m, &[]).unwrap();
+        assert_eq!(r.fee.base, 6 * LAMPORTS_PER_SIGNATURE);
     }
 }
