@@ -316,6 +316,8 @@ export type SolanaDisplay = {
 export type SolanaStep = { program: string; program_name: string | null } & (
   | { type: "sol_transfer"; from: string; to: string; lamports: string }
   | { type: "create_account"; from: string; account: string; lamports: string; space: string; owner: string; owner_name: string | null }
+  | { type: "create_account_with_seed"; from: string; account: string; base: string; lamports: string; space: string; owner: string; owner_name: string | null }
+  | { type: "transfer_with_seed"; from: string; base: string; to: string; lamports: string }
   | { type: "assign"; account: string; owner: string; owner_name: string | null }
   | { type: "allocate"; account: string; space: string }
   | { type: "nonce_withdraw"; nonce: string; to: string; lamports: string; signers: string[] }

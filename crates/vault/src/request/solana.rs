@@ -102,6 +102,25 @@ fn solana_step(cluster: &SolanaChain, r: &choice_wallet_solana::Read, s: &choice
             "type": "create_account", "from": b58(from), "account": b58(account), "lamports": lamports.to_string(),
             "space": space.to_string(), "owner": b58(owner), "owner_name": program::name(owner),
         }),
+        I::CreateAccountWithSeed {
+            from,
+            account,
+            base,
+            lamports,
+            space,
+            owner,
+        } => json!({
+            "type": "create_account_with_seed", "from": b58(from), "account": b58(account), "base": b58(base),
+            "lamports": lamports.to_string(), "space": space.to_string(), "owner": b58(owner), "owner_name": program::name(owner),
+        }),
+        I::TransferWithSeed {
+            from,
+            base,
+            to,
+            lamports,
+        } => {
+            json!({ "type": "transfer_with_seed", "from": b58(from), "base": b58(base), "to": b58(to), "lamports": lamports.to_string() })
+        }
         I::Assign { account, owner } => {
             json!({ "type": "assign", "account": b58(account), "owner": b58(owner), "owner_name": program::name(owner) })
         }

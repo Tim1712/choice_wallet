@@ -157,6 +157,33 @@ pub fn solana_transaction(r: &Read, signer: &Pubkey, c: &Cctp, ctx: &Context) ->
                     out.push(assign_away(owner));
                 }
             }
+            Instruction::CreateAccountWithSeed { from, lamports, .. } => {
+                if from == signer {
+                    sol_out = sol_out.saturating_add(*lamports);
+                }
+            }
+            // SOL out of an account derived from the signer, which it alone signs for: its SOL.
+            Instruction::TransferWithSeed {
+                from,
+                base,
+                to,
+                lamports,
+            } => {
+                if base == signer && to != signer {
+                    sol_out = sol_out.saturating_add(*lamports);
+                    recipient(ctx, &b58(to), None, &mut out);
+                    out.push(finding(
+                        "solana_seed_transfer",
+                        Level::Amber,
+                        format!(
+                            "Takes SOL out of {}, an account derived from this one, to {}.",
+                            short(&b58(from)),
+                            short(&b58(to))
+                        ),
+                        json!({ "account": b58(from), "to": b58(to), "lamports": lamports.to_string() }),
+                    ));
+                }
+            }
             Instruction::Assign { account, owner } => {
                 if account == signer {
                     out.push(assign_away(owner));
@@ -1471,5 +1498,47 @@ mod tests {
         };
         let a = solana_transaction(&r, &ME, &MAINNET, &usdc);
         assert_eq!((a.level, a.confirm), (Level::Amber, None));
+    }
+
+    /// System's seed instructions are read: SOL leaving the signer, or an account derived from
+    /// it, to someone else is a send.
+    #[test]
+    fn seed_instructions_are_read() {
+        let ctx = Context {
+            balances: [("native".to_owned(), "11000000000".to_owned())].into(),
+            ..Default::default()
+        };
+        let send = |base| {
+            tx(
+                &[ME],
+                vec![Instruction::TransferWithSeed {
+                    from: [5; 32],
+                    base,
+                    to: THEM,
+                    lamports: 10_000_000_000,
+                }],
+            )
+        };
+        let mine = rules(&send(ME), &MAINNET, &ctx);
+        assert!(mine.contains(&"solana_seed_transfer"), "{mine:?}");
+        assert!(mine.contains(&"most_of_balance"), "{mine:?}");
+        assert!(!mine.contains(&"solana_unread_program"), "{mine:?}");
+        assert!(rules(&send(THEM), &MAINNET, &ctx).is_empty());
+        let create = tx(
+            &[ME],
+            vec![Instruction::CreateAccountWithSeed {
+                from: ME,
+                account: [5; 32],
+                base: ME,
+                lamports: 10_000_000_000,
+                space: 0,
+                owner: [6; 32],
+            }],
+        );
+        let r = rules(&create, &MAINNET, &ctx);
+        assert!(
+            r.contains(&"most_of_balance") && !r.contains(&"solana_unread_program"),
+            "{r:?}"
+        );
     }
 }

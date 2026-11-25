@@ -325,6 +325,11 @@ function solanaShown(d: SolanaDisplay, cluster: string, findings: Finding[]): Sh
         if (s.from === d.signer) out.sends.push({ coins: [{ denom: "sol", amount: s.lamports }], to: s.to });
         else out.others.push(`Moves SOL from ${short(s.from)} to ${short(s.to)}`);
         break;
+      case "transfer_with_seed":
+        // From an account derived from this one, which only it signs for: its SOL, sent.
+        if (s.base === d.signer && s.to !== d.signer) out.sends.push({ coins: [{ denom: "sol", amount: s.lamports }], to: s.to });
+        else out.others.push(`Moves SOL from ${short(s.from)} to ${s.to === d.signer ? "this account" : short(s.to)}`);
+        break;
       case "token_transfer":
         if (s.authority === d.signer && s.mint) out.sends.push({ coins: [{ denom: `spl:${s.mint}`, amount: s.amount }], to: s.destination_owner ?? s.destination });
         else out.others.push(`Moves tokens to ${short(s.destination_owner ?? s.destination)}`);

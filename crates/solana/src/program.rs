@@ -187,6 +187,34 @@ pub enum Instruction {
         /// The program that will own it.
         owner: Pubkey,
     },
+    /// Creates and funds an account at an address derived from `base`, a seed and `owner`
+    /// (System's `CreateAccountWithSeed`).
+    CreateAccountWithSeed {
+        /// Pays; signs.
+        from: Pubkey,
+        /// The new account.
+        account: Pubkey,
+        /// The address it derives from; signs.
+        base: Pubkey,
+        /// Lamports moved into it.
+        lamports: u64,
+        /// Its size in bytes.
+        space: u64,
+        /// The program that will own it.
+        owner: Pubkey,
+    },
+    /// Moves SOL out of an account derived from `base` (System's `TransferWithSeed`): `base`
+    /// signs for it.
+    TransferWithSeed {
+        /// The derived account it leaves.
+        from: Pubkey,
+        /// The address `from` derives from; signs.
+        base: Pubkey,
+        /// Receives.
+        to: Pubkey,
+        /// Lamports.
+        lamports: u64,
+    },
     /// Puts `space` bytes of data on a system account. A system account carrying data can't
     /// send SOL or pay a fee again.
     Allocate {
@@ -620,8 +648,36 @@ fn system(accounts: &[Account], d: &[u8]) -> Option<Instruction> {
                 owner: key_at(d, 44 + seed)?,
             }
         }
+        // CreateAccountWithSeed: [from, account, (base)]. Data: base, a length-prefixed seed
+        // (u64 length), lamports, space, owner.
+        3 => {
+            let seed = usize::try_from(u64_at(d, 36)?).ok()?;
+            let at = 44usize.checked_add(seed)?;
+            len(at.checked_add(48)?)?;
+            Instruction::CreateAccountWithSeed {
+                from: acct(0)?,
+                account: acct(1)?,
+                base: key_at(d, 4)?,
+                lamports: u64_at(d, at)?,
+                space: u64_at(d, at + 8)?,
+                owner: key_at(d, at + 16)?,
+            }
+        }
+        // TransferWithSeed: [from (derived), base (signs), to]. Data: lamports, a
+        // length-prefixed seed (u64 length), the derived account's owner.
+        11 => {
+            let seed = usize::try_from(u64_at(d, 12)?).ok()?;
+            len(20usize.checked_add(seed)?.checked_add(32)?)?;
+            Instruction::TransferWithSeed {
+                from: acct(0)?,
+                base: acct(1)?,
+                to: acct(2)?,
+                lamports: u64_at(d, 4)?,
+            }
+        }
+        // InitializeNonceAccount (6) and UpgradeNonceAccount (12) set up a nonce account;
         // AllocateWithSeed (9) allocates a derived address, not a signing account.
-        3 | 6 | 9 | 11 | 12 => Instruction::Other { program: SYSTEM.key() },
+        6 | 9 | 12 => Instruction::Other { program: SYSTEM.key() },
         _ => return None,
     })
 }
@@ -912,6 +968,46 @@ mod tests {
                 signers: vec![auth]
             }
         );
+        // CreateAccountWithSeed and TransferWithSeed, with their seed.
+        let mut create = 3u32.to_le_bytes().to_vec();
+        create.extend_from_slice(&auth);
+        create.extend_from_slice(&4u64.to_le_bytes());
+        create.extend_from_slice(b"seed");
+        create.extend_from_slice(&9u64.to_le_bytes());
+        create.extend_from_slice(&10u64.to_le_bytes());
+        create.extend_from_slice(&[8; 32]);
+        assert_eq!(
+            read(&SYSTEM.key(), &[signer(auth), acct(n)], &create),
+            Instruction::CreateAccountWithSeed {
+                from: auth,
+                account: n,
+                base: auth,
+                lamports: 9,
+                space: 10,
+                owner: [8; 32]
+            }
+        );
+        let mut send = 11u32.to_le_bytes().to_vec();
+        send.extend_from_slice(&7u64.to_le_bytes());
+        send.extend_from_slice(&4u64.to_le_bytes());
+        send.extend_from_slice(b"seed");
+        send.extend_from_slice(&[8; 32]);
+        assert_eq!(
+            read(&SYSTEM.key(), &[acct(n), signer(auth), acct(to)], &send),
+            Instruction::TransferWithSeed {
+                from: n,
+                base: auth,
+                to,
+                lamports: 7
+            }
+        );
+        for mut d in [create, send] {
+            d.push(0);
+            assert!(matches!(
+                read(&SYSTEM.key(), &[acct(n), signer(auth), acct(to)], &d),
+                Instruction::Unreadable { .. }
+            ));
+        }
         // Any other length is unreadable.
         alloc.push(0);
         assert!(matches!(
