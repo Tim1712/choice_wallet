@@ -10,8 +10,9 @@ export type NotifyIo = {
   /** The origin of a tab's top frame, as the relay there reports it; null when no relay
    *  answers (a page the wallet doesn't run on). */
   originOf(tab: number): Promise<string | null>;
-  /** Send "changed" to a tab's relay. */
-  tell(tab: number): void;
+  /** Send "changed" to a tab's relay, for `origin`: the relay passes it on only if its page
+   *  is still there, since the tab may have moved to another site since it answered. */
+  tell(tab: number, origin: string): void;
 };
 
 export async function notifyConnected(io: NotifyIo, also?: string | readonly string[]): Promise<void> {
@@ -21,7 +22,7 @@ export async function notifyConnected(io: NotifyIo, also?: string | readonly str
   await Promise.all(
     (await io.tabs()).map(async (tab) => {
       const origin = await io.originOf(tab).catch(() => null);
-      if (origin !== null && to.has(origin)) io.tell(tab);
+      if (origin !== null && to.has(origin)) io.tell(tab, origin);
     }),
   );
 }

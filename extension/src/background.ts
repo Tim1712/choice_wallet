@@ -101,7 +101,7 @@ const service = createService({
           const o: unknown = await chrome.tabs.sendMessage(tab, { choice: "origin" }, { frameId: 0 });
           return typeof o === "string" ? o : null;
         },
-        tell: (tab) => void chrome.tabs.sendMessage(tab, { choice: "changed" }, { frameId: 0 }).catch(() => {}),
+        tell: (tab, origin) => void chrome.tabs.sendMessage(tab, { choice: "changed", origin }, { frameId: 0 }).catch(() => {}),
       },
       also,
     ).catch(() => {});

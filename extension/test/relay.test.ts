@@ -5,6 +5,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 
 type Listener = (e: { source: unknown; data: unknown }) => void;
+type WorkerListener = (m: unknown, sender: { id?: string }, reply: (r: unknown) => void) => void;
 
 // Hardening: an oversized request was refused only in the worker, after the browser had
 // copied it there.
@@ -12,10 +13,11 @@ test("the relay refuses an oversized request before it reaches the worker", asyn
   const listeners: Listener[] = [];
   const posted: { id?: number; error?: { code: number } }[] = [];
   const sent: unknown[] = [];
-  const win = { addEventListener: (_: string, f: Listener) => void listeners.push(f), postMessage: (m: never) => void posted.push(m) };
+  const fromWorker: WorkerListener[] = [];
+  const win = { addEventListener: (_: string, f: Listener) => void listeners.push(f), postMessage: (m: never) => void posted.push(m), location: { origin: "https://app.example" } };
   Object.assign(globalThis, {
     window: win,
-    chrome: { runtime: { id: "x", sendMessage: async (m: unknown) => (sent.push(m), { result: "0x6f0" }), onMessage: { addListener() {} } } },
+    chrome: { runtime: { id: "x", sendMessage: async (m: unknown) => (sent.push(m), { result: "0x6f0" }), onMessage: { addListener: (f: WorkerListener) => void fromWorker.push(f) } } },
   });
   await import("../src/relay");
   const ask = (id: number, method: string, params?: unknown) => listeners[0]!({ source: win, data: { target: "choice-wallet:relay", id, method, params } });
@@ -31,4 +33,14 @@ test("the relay refuses an oversized request before it reaches the worker", asyn
       [2, undefined],
     ],
   );
+
+  // Review-3: "changed" reaches the page only when it names this page's site. The worker
+  // asked the tab's origin first; a tab that moved on since hears nothing meant for the old one.
+  posted.length = 0;
+  const worker = (m: unknown) => fromWorker[0]!(m, { id: "x" }, () => {});
+  worker({ choice: "changed", origin: "https://connected.example" });
+  worker({ choice: "changed" });
+  assert.deepEqual(posted, []);
+  worker({ choice: "changed", origin: "https://app.example" });
+  assert.deepEqual(posted, [{ target: "choice-wallet:page", event: "changed" }]);
 });
