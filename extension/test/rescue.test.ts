@@ -4,14 +4,14 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
-import { chain, code, INJ, ME, ok, USDT, VAL_A, wallet } from "./fake";
+import { chain, code, INJ, ME, ok, THEM, USDT, VAL_A, wallet } from "./fake";
 
 type Status = { accounts: { addresses: Record<string, string>; name: string }[]; active: number };
 type Summary = { address: string | null; name?: string; canGrant?: boolean; gas?: { limit: { amount: string }[]; current: boolean } | null; stakesMove?: boolean };
 type Review = {
   display: { signer: string; fee: { granter: string | null }; messages: { type: string; [k: string]: unknown }[] };
   risk: { level: string; confirm?: string; findings: { rule: string; message: string }[] };
-  rescue?: { to: string; rest: number };
+  rescue?: { to: string; rest: number; unrevocable?: number };
 };
 
 const COSMOS = "cosmos:injective-1";
@@ -49,6 +49,21 @@ test("a rescue address: another account, gas from it, and a rescue to it", async
   assert.ok(!r.risk.confirm, "nothing to type for a rescue to your own account");
   const sent = r.display.messages[3]!["amount"] as { denom: string; amount: string }[];
   assert.deepEqual(sent.map((c) => c.denom).sort(), ["inj", USDT].sort());
+
+  // Grants: one of a type the wallet doesn't read but that names its message type is revoked
+  // by that name (it was skipped); one that names none is said to stay.
+  net.state.grants = [
+    { grantee: THEM, authorization: { "@type": "/injective.exchange.v2.GenericExchangeAuthorization", msg: "/injective.exchange.v2.MsgCreateSpotLimitOrder", spend_limit: [] }, expiration: null },
+    { grantee: THEM, authorization: { "@type": "/example.v1.MadeUpAuthorization" }, expiration: null },
+  ];
+  const withGrants = ok<Review>(await service.handle({ type: "prepare_rescue" }));
+  assert.deepEqual(withGrants.rescue, { to: rescue, rest: 0, unrevocable: 1 });
+  const revoked = withGrants.display.messages.filter((m) => m.type === "authz_revoke");
+  assert.deepEqual(
+    revoked.map((m) => [m["grantee"], m["msg_type_url"]]),
+    [[THEM, "/injective.exchange.v2.MsgCreateSpotLimitOrder"]],
+  );
+  net.state.grants = [];
 
   // No INJ left: without gas from the rescue address it can't pay; with it, it can.
   net.state.balances = { [USDT]: 2_500_000n };

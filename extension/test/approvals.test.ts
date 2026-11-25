@@ -118,6 +118,29 @@ test("revoke: the Cosmos side in one transaction, graded Info, signed as reviewe
   }
 });
 
+// A grant of a type the wallet doesn't read had no revoke, though it is red. One that names
+// its message type (Injective's GenericExchangeAuthorization does) is revoked by that name,
+// and the vault builds, reads and signs that MsgRevoke like any other.
+test("a grant the wallet doesn't read is revoked by the message type it names", async () => {
+  const net = chain({});
+  const ORDER = "/injective.exchange.v2.MsgCreateSpotLimitOrder";
+  net.state.grants = [{ grantee: THEM, authorization: { "@type": "/injective.exchange.v2.GenericExchangeAuthorization", msg: ORDER, spend_limit: [] }, expiration: null }];
+  const { service } = await wallet(net);
+  const s = ok<Summary>(await service.handle({ type: "approvals" }));
+  assert.deepEqual(
+    s.grants.map((g) => [g.grantee, g.msgTypeUrl, (g as { unread?: true }).unread]),
+    [[THEM, ORDER, true]],
+  );
+  const review = ok<Review>(await service.handle({ type: "prepare_revoke", items: [{ type: "authz", grantee: THEM, msg_type_url: ORDER }] }));
+  assert.deepEqual(
+    review.display.messages!.map((m) => [m["type"], m["msg_type_url"]]),
+    [["authz_revoke", ORDER]],
+  );
+  assert.equal(review.risk.level, "info");
+  ok(await service.handle({ type: "confirm_send", digest: review.digest }));
+  assert.ok(Buffer.from(net.state.broadcasts[0]!, "base64").includes(Buffer.from(ORDER)));
+});
+
 test("revoke an ERC20 allowance: approve(spender, 0) on the token", async () => {
   const net = granted();
   const { service } = await wallet(net);
