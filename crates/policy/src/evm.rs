@@ -1181,6 +1181,9 @@ fn system_call(req: &TxRequest, n: u8, selector: Option<[u8; 4]>, injective: boo
     if n == EXCHANGE && ORDER_METHODS.contains(&sel) {
         return order(data, sel, method).unwrap_or_else(unreadable);
     }
+    if n == EXCHANGE && BETWEEN_SUBACCOUNTS.contains(&sel) {
+        return between_subaccounts(data, &req.from, method).unwrap_or_else(unreadable);
+    }
     finding(
         "precompile_call",
         method.level,
@@ -1191,6 +1194,55 @@ fn system_call(req: &TxRequest, n: u8, selector: Option<[u8; 4]>, injective: boo
 
 /// `deposit(address sender, string subaccountID, string denom, uint256 amount)`.
 const EXCHANGE_DEPOSIT: u32 = 0xe441dec9;
+
+/// Exchange methods that move funds or margin from a source subaccount to a destination one:
+/// `subaccountTransfer`, `increasePositionMargin` and `decreasePositionMargin`, each
+/// `(address sender, string sourceSubaccountID, string destinationSubaccountID, string, uint256)`.
+const BETWEEN_SUBACCOUNTS: [u32; 3] = [0x42eba2ed, 0x8ff96af4, 0xaf78360b];
+
+/// A move between subaccounts, info only when both are the sender's. Margin added to another
+/// account's position is that account's (review-3: only the sender was read before). Whether
+/// the module refuses a foreign subaccount here isn't checked against injective-core, so either
+/// side naming another account is red. IDs are read as a deposit's; one that reading refuses
+/// is unreadable.
+fn between_subaccounts(data: &[u8], from: &EthAddress, method: &Method) -> Option<Finding> {
+    use abi::Ty::{Bytes, Word};
+    let v = args(data, &[Word, Bytes, Bytes, Bytes, Word])?;
+    let (source, dest) = (v[1].bytes().ok()?, v[2].bytes().ok()?);
+    let (source_owner, dest_owner) = (subaccount_owner(source, from)?, subaccount_owner(dest, from)?);
+    let params = json!({
+        "precompile": "0x0000000000000000000000000000000000000065",
+        "method": method.signature,
+        "source_subaccount_id": crate::text::clip(&String::from_utf8_lossy(source), 66),
+        "destination_subaccount_id": crate::text::clip(&String::from_utf8_lossy(dest), 66),
+        "source_owner": source_owner.to_checksum_hex(),
+        "destination_owner": dest_owner.to_checksum_hex(),
+        "amount": v[4].uint().ok()?.to_string(),
+    });
+    Some(if dest_owner != *from {
+        finding(
+            "exchange_subaccount_other",
+            Level::Red,
+            format!(
+                "Moves funds into the INJ orderbook account of {}, which can withdraw them.",
+                short(&dest_owner.to_checksum_hex())
+            ),
+            params,
+        )
+    } else if source_owner != *from {
+        finding(
+            "exchange_subaccount_other",
+            Level::Red,
+            format!(
+                "Moves funds out of the INJ orderbook account of {}.",
+                short(&source_owner.to_checksum_hex())
+            ),
+            params,
+        )
+    } else {
+        finding("precompile_call", method.level, method.what.into(), params)
+    })
+}
 
 /// The owner a subaccount ID names, read as the exchange module reads a deposit's
 /// (`GetSubaccountIDOrDeriveFromNonce`): up to 3 characters is a nonce of the sender's own
@@ -2218,6 +2270,54 @@ mod tests {
             call(0xe441dec9u32.to_be_bytes(), &[addr_word(FROM)]),
         );
         assert_eq!(grade(&short_form).findings[0].rule, "precompile_unknown");
+
+        // Review-3: margin and subaccount moves read both subaccounts. Margin added to another
+        // account's position is theirs: red, as a deposit there is (info before).
+        let between = |sel: u32, source: &str, dest: &str| {
+            let mut d = sel.to_be_bytes().to_vec();
+            d.extend(abi::encode(&[
+                abi::Val::Word(addr_word(FROM)),
+                abi::Val::Bytes(source.as_bytes().to_vec()),
+                abi::Val::Bytes(dest.as_bytes().to_vec()),
+                abi::Val::Bytes(format!("0x{}", "11".repeat(32)).into_bytes()),
+                abi::Val::Word(U256::from_u128(10u128.pow(24)).to_be_bytes()),
+            ]));
+            grade(&req(precompile(EXCHANGE), d))
+        };
+        for sel in [0x8ff96af4, 0xaf78360b, 0x42eba2ed] {
+            for (source, dest) in [("0", "1"), ("0", id(FROM, "0x").as_str()), (id(FROM, "").as_str(), "2")] {
+                let a = between(sel, source, dest);
+                assert_eq!(
+                    (a.level, a.findings[0].rule),
+                    (Level::Info, "precompile_call"),
+                    "{sel:x}"
+                );
+            }
+            for (source, dest) in [
+                ("0".to_owned(), id([0xbb; 20], "0x")),
+                (id([0xbb; 20], "0x"), "0".to_owned()),
+            ] {
+                let a = between(sel, &source, &dest);
+                assert_eq!(
+                    (a.level, a.findings[0].rule),
+                    (Level::Red, "exchange_subaccount_other"),
+                    "{sel:x} {source} {dest}"
+                );
+            }
+            for bad in ["abcd".to_owned(), id(FROM, "0X")] {
+                assert_eq!(between(sel, "0", &bad).findings[0].rule, "precompile_unknown");
+            }
+            let short_form = req(precompile(EXCHANGE), call(sel.to_be_bytes(), &[addr_word(FROM)]));
+            assert_eq!(grade(&short_form).findings[0].rule, "precompile_unknown");
+        }
+        // The reviewer's case: the sender's own funds into another account's position.
+        let other = format!("0x{}{}", "bb".repeat(20), "0".repeat(24));
+        let a = between(0x8ff96af4, "0", &other);
+        assert_eq!(a.level, Level::Red);
+        assert_eq!(
+            a.findings[0].params["destination_owner"],
+            EthAddress::from_bytes([0xbb; 20]).to_checksum_hex()
+        );
 
         // An order spends this account's balance at a worst price the site chose: red, as the
         // same Cosmos message is (run-4: a fixed amber before). A batch that only cancels is info.
