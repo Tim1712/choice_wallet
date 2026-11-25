@@ -1426,7 +1426,7 @@ mod tests {
         assert!(rules(&nonce, &MAINNET, &Context::default()).contains(&"solana_durable_nonce"));
     }
 
-    /// REVIEW: Stake's Authorize takes the current authority from any signing account of the
+    /// Review 3: Stake's Authorize takes the current authority from any signing account of the
     /// instruction (the program collects every signer; account 2 is unused). The signer put
     /// at index 3 (the custodian's slot) with anything at index 2 hands its withdrawer over,
     /// and the instruction alone raises nothing.
@@ -1451,7 +1451,6 @@ mod tests {
         m.extend_from_slice(&data);
         let r = choice_wallet_solana::read(&m, &[]).unwrap();
         let a = solana_transaction(&r, &ME, &MAINNET, &Context::default());
-        eprintln!("level {:?} confirm {:?} rules {:?}", a.level, a.confirm, rules_of(&a));
         assert_eq!(
             a.level,
             Level::Red,
@@ -1460,7 +1459,7 @@ mod tests {
         );
     }
 
-    /// REVIEW: AuthorizeChecked likewise: [stake, clock, anything, new authority (signs), ME (signs)].
+    /// Review 3: AuthorizeChecked likewise: [stake, clock, anything, new authority (signs), ME (signs)].
     #[test]
     fn review_stake_authorize_checked_with_signer_out_of_place() {
         use choice_wallet_solana::program::STAKE;
@@ -1481,11 +1480,10 @@ mod tests {
         m.extend_from_slice(&data);
         let r = choice_wallet_solana::read(&m, &[]).unwrap();
         let a = solana_transaction(&r, &ME, &MAINNET, &Context::default());
-        eprintln!("level {:?} confirm {:?} rules {:?}", a.level, a.confirm, rules_of(&a));
         assert_eq!(a.level, Level::Red);
     }
 
-    /// REVIEW: closing a wrapped-SOL account to someone else sends its whole balance.
+    /// Review 3: closing a wrapped-SOL account to someone else sends its whole balance.
     #[test]
     fn review_close_wrapped_sol_elsewhere() {
         let r = tx(
@@ -1509,7 +1507,6 @@ mod tests {
             ..Default::default()
         };
         let a = solana_transaction(&r, &ME, &MAINNET, &ctx);
-        eprintln!("level {:?} confirm {:?} rules {:?}", a.level, a.confirm, rules_of(&a));
         assert_eq!(a.level, Level::Red);
         assert_eq!(a.confirm, Some("GIVE"));
         // Whose token the wallet can't tell: it may be wrapped SOL.
