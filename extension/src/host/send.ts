@@ -501,6 +501,10 @@ export function createSender(d: SendDeps) {
       extra?: Partial<SendReview>;
       /** A bridge burn: followed once broadcast. */
       deposit?: Omit<DepositSent, "chain" | "hash">;
+      /** The ERC20 the wallet's own approval is on (a swap's input, the pinned USDC): the
+       *  token it vouches for, so the review reads approve(spender, n) on it as an allowance
+       *  only, not also as NFT #n. */
+      erc20?: string;
     },
   ): Promise<Result<SendReview>> {
     const net = NETWORKS[network];
@@ -552,7 +556,7 @@ export function createSender(d: SendDeps) {
       if (!built.ok) return built;
       const decoded = await d.vault<Pick<SendReview, "digest" | "display" | "risk">>("decode", {
         request: built.result.request,
-        context: { balances: { native: injHeld.toString() }, ...(await d.riskFacts(network, null)) },
+        context: { balances: { native: injHeld.toString() }, ...(spec.erc20 ? { erc20_contracts: [spec.erc20] } : {}), ...(await d.riskFacts(network, null)) },
       });
       if (!decoded.ok) return decoded;
       const { digest, display, risk } = decoded.result;
@@ -589,7 +593,8 @@ export function createSender(d: SendDeps) {
       expect?: (display: EvmDisplayLike) => string | null;
       extra?: Partial<SendReview>;
       deposit?: Omit<DepositSent, "chain" | "hash">;
-      /** The wallet's own revoke of an ERC20 allowance it listed: the token it vouches for. */
+      /** The token the wallet vouches for as an ERC20: of its own revoke of an allowance it
+       *  listed, or of its own approval (the pinned USDC). */
       erc20?: string;
     },
   ): Promise<Result<SendReview>> {

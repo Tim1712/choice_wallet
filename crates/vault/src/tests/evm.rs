@@ -308,6 +308,17 @@ fn own_swap_approvals_are_exact() {
         d["display"]["call"],
         json!({ "type": "approve", "spender": permit2, "amount": "5000000" })
     );
+    // Unvouched, the same bytes on an ERC721 would let Permit2 take NFT #5000000 (review-3);
+    // the host vouches for the swap's input as an ERC20.
+    assert!(
+        d["risk"]["findings"][0]["message"]
+            .as_str()
+            .is_some_and(|m| m.contains("NFT #5000000"))
+    );
+    let d = ok(
+        "decode",
+        json!({ "request": r, "context": { "erc20_contracts": [usdt] } }),
+    );
     assert_eq!(
         d["risk"]["findings"][0]["message"],
         "Permit2 could spend this token up to the amount shown."
