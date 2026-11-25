@@ -4,7 +4,8 @@
 //   the toolbar popup, so a page can't train the user to type the password into windows
 //   that appear by themselves.
 // - Its main button wakes only after it has shown, with the window in front, visible and
-//   focused, for a moment, so a site can't open it under a click meant for something else.
+//   focused, for a moment, so a site can't open it under a click meant for something else,
+//   and a mouse click counts only once the pointer has come onto it since (./arm.ts).
 // - A site's text shows its invisible characters (bidi, zero-width) as their code points.
 // - What it shows is the vault's decode of what will be signed, prepared when it asks;
 //   approving names that decode's digest.
@@ -45,7 +46,7 @@ const browser: ArmEnv = {
     // Captured on the window: a disabled button gets no click, but the press still arrives.
     // A pointer by its ID, a key by its code (auto-repeat is the same key, held).
     const id = (e: Event) => (e instanceof KeyboardEvent ? `key:${e.code}` : `pointer:${(e as PointerEvent).pointerId}`);
-    const d = (e: Event) => down(id(e));
+    const d = (e: Event) => down(id(e), e instanceof PointerEvent && e.pointerType === "mouse");
     const u = (e: Event) => up?.(id(e));
     const events: [string, (e: Event) => void][] = [
       ["pointerdown", d],
@@ -58,6 +59,15 @@ const browser: ArmEnv = {
     return () => {
       for (const [name, f] of events) window.removeEventListener(name, f, true);
     };
+  },
+  enters(f) {
+    // The main button is marked `data-arm`; a mouse coming onto it (or into it) from outside.
+    const inside = (t: EventTarget | null) => t instanceof Element && t.closest("[data-arm]") !== null;
+    const over = (e: PointerEvent) => {
+      if (e.pointerType === "mouse" && inside(e.target) && !inside(e.relatedTarget)) f();
+    };
+    window.addEventListener("pointerover", over, true);
+    return () => window.removeEventListener("pointerover", over, true);
   },
 };
 
@@ -189,6 +199,7 @@ export function ApproveView({ id }: { id: string }) {
           {ready && !problem && (
             <button
               className={risk && (risk.level === "red" || blocked) ? "btn btn-danger" : "btn btn-gold"}
+              data-arm=""
               disabled={!armed || busy || blocked || needsWord}
               onClick={() => void answer(true)}
             >
