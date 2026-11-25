@@ -56,11 +56,18 @@ export const UNLIMITED = 2n ** 128n;
 /** How a token allowance of `amount` is shown, given what the account holds of the token
  *  (`held`; undefined when the wallet didn't read it). Every allowance can move funds: red
  *  when it can take all there is (unlimited, at least the balance, or a balance the wallet
- *  doesn't know), amber when it is capped below a balance the wallet read. */
+ *  doesn't know), amber when it is capped below a balance the wallet read. Amounts come from
+ *  the endpoint: one that isn't a whole number is red, never a throw that would take down
+ *  the screen the user revokes from. */
 export function allowanceLevel(amount: string, held: string | undefined): "red" | "amber" {
-  const a = BigInt(amount);
-  if (a >= UNLIMITED || held === undefined) return "red";
-  return a >= BigInt(held) ? "red" : "amber";
+  const a = whole(amount);
+  const h = held === undefined ? undefined : whole(held);
+  if (a === undefined || h === undefined || a >= UNLIMITED) return "red";
+  return a >= h ? "red" : "amber";
+}
+
+function whole(s: string): bigint | undefined {
+  return /^\d{1,80}$/.test(s) ? BigInt(s) : undefined;
 }
 
 /** A fee allowance (`limit` its spend limit, empty for none): red with no limit, or a limit
