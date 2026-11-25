@@ -950,11 +950,15 @@ test("oversized typed data and messages are refused before any window", async ()
   assert.equal(ui.opened.length, opened);
 });
 
-test("only a tab's top frame, at https (or http on this machine), is a site", () => {
+test("only a tab's top frame, at https (or http on this machine, in a build for testing sites), is a site", () => {
   const ext = "abcdefghijklmnopabcdefghijklmnop";
   const s = (o: Record<string, unknown>) => ({ id: ext, tab: {}, frameId: 0, origin: "https://app.example", url: "https://app.example/swap", ...o });
   assert.equal(dappOrigin(s({}), ext), "https://app.example");
-  assert.equal(dappOrigin(s({ origin: "http://127.0.0.1:5173", url: "http://127.0.0.1:5173/" }), ext), "http://127.0.0.1:5173");
+  for (const origin of ["http://127.0.0.1:5173", "http://localhost:3000", "http://localhost"]) {
+    assert.equal(dappOrigin(s({ origin, url: `${origin}/` }), ext), null, origin);
+    assert.equal(dappOrigin(s({ origin, url: `${origin}/` }), ext, true), origin, origin);
+  }
+  assert.equal(dappOrigin(s({ origin: "http://app.example", url: "http://app.example/" }), ext, true), null);
   assert.equal(dappOrigin(s({ origin: "http://app.example", url: "http://app.example/" }), ext), null);
   assert.equal(dappOrigin(s({ frameId: 2 }), ext), null);
   assert.equal(dappOrigin(s({ tab: undefined }), ext), null);

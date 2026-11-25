@@ -42,6 +42,12 @@ import { join } from "node:path";
 
 const [chrome, ext, out, phraseFile, recipient, amount, tokenContract] = process.argv.slice(2);
 if (!amount) throw new Error("usage: node e2e-live.mjs <chromium> <dist> <shots> <phrase file> <recipient> <amount> [token contract]");
+/** The test sites are served on 127.0.0.1 and localhost, which only a build with
+ *  `node extension/build.mjs --local-sites` answers: release builds answer https only. */
+const localSites = () => {
+  const m = JSON.parse(readFileSync(join(ext, "manifest.json"), "utf8"));
+  if (!m.content_scripts.every((c) => c.matches.includes("http://127.0.0.1/*"))) throw new Error(`${ext} answers https sites only: build it with \`node extension/build.mjs --local-sites\``);
+};
 /** The test site. It builds its Cosmos tx by hand (protobuf), as a dapp's library would. */
 const SITE_PAGE = `<!doctype html><title>Live test site</title><p>Live test site</p><script>
 window.__wallets = [];
@@ -266,6 +272,7 @@ try {
   /** The test site, served on 127.0.0.1 in a tab, and a way to answer the wallet's approval
    *  windows (`expect` to see, `button` to press, `typed` into the window's word field). */
   const startSite = async () => {
+    localSites();
     const server = createServer((req, res) => {
       res.writeHead(req.url === "/" ? 200 : 204, { "content-type": "text/html" });
       res.end(req.url === "/" ? SITE_PAGE : "");

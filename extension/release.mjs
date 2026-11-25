@@ -53,6 +53,8 @@ execFileSync(process.execPath, [join(here, "build.mjs")], { cwd: here, stdio: "i
 // The commit goes into the manifest's version_name, which chrome://extensions shows.
 const dist = join(here, "dist");
 const manifest = JSON.parse(manifestText);
+// Sites on http (localhost for the e2e checks) are only for builds with --local-sites.
+if (manifest.content_scripts.some((c) => c.matches.some((m) => !m.startsWith("https://")))) fail("the manifest runs content scripts on pages that aren't https");
 manifest.version_name = snapshot ? `${version} snapshot ${commit.slice(0, 12)}${dirty ? " dirty" : ""}` : `${version} (${commit.slice(0, 12)})`;
 writeFileSync(join(dist, "manifest.json"), JSON.stringify(manifest, null, 2) + "\n");
 

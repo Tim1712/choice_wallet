@@ -65,6 +65,7 @@ throwaway wallet on testnet.
 Browser check (Chromium or Chrome for Testing, not branded Chrome):
 
 ```sh
+node extension/build.mjs --local-sites   # dist/ that answers the e2e test sites, on 127.0.0.1 and localhost
 npm run e2e -- /path/to/chromium "$PWD/extension/dist" /tmp/shots   # absolute paths
 npm run e2e -- /path/to/chromium "$PWD/extension/dist" /tmp/shots --live   # also reads mainnet and Choice prices
 ```

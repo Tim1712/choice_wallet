@@ -23,6 +23,13 @@ import { approvalLog, ethMessage, rawTx, resultData, transferLog } from "../chai
 
 const [chrome, ext, out, flag] = process.argv.slice(2);
 const live = flag === "--live";
+/** The test sites are served on 127.0.0.1 and localhost, which only a build with
+ *  `node extension/build.mjs --local-sites` answers: release builds answer https only. */
+const localSites = () => {
+  const m = JSON.parse(readFileSync(join(ext, "manifest.json"), "utf8"));
+  if (!m.content_scripts.every((c) => c.matches.includes("http://127.0.0.1/*"))) throw new Error(`${ext} answers https sites only: build it with \`node extension/build.mjs --local-sites\``);
+};
+localSites();
 
 // A fake mainnet LCD for any address: 5 INJ, 2.5 USDT, and a token that calls itself USDT
 // (unlisted and unpriced, so the token filter hides it).
