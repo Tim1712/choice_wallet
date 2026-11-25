@@ -335,15 +335,29 @@ pub fn solana_transaction(r: &Read, signer: &Pubkey, c: &Cctp, ctx: &Context) ->
                 ..
             } => {
                 if owner == signer && destination != signer {
-                    out.push(finding(
-                        "solana_close_elsewhere",
-                        Level::Amber,
-                        format!(
-                            "Closes a token account and sends its SOL to {}.",
-                            short(&b58(destination))
-                        ),
-                        json!({ "account": b58(account), "destination": b58(destination) }),
-                    ));
+                    let params = json!({ "account": b58(account), "destination": b58(destination) });
+                    let to = short(&b58(destination));
+                    // A wrapped-SOL account closes with its balance, which is all SOL: it goes
+                    // to the destination whole. Any other token account closes only empty, and
+                    // gives its rent. One whose token the wallet can't tell may be wrapped SOL.
+                    let mint = token_mint(r, ctx, account).map(|m| b58(&m));
+                    out.push(if mint.as_deref().is_none_or(|m| NATIVE_MINTS.contains(&m)) {
+                        let mut f = finding(
+                            "solana_close_elsewhere",
+                            Level::Red,
+                            format!("Closes a token account that may hold wrapped SOL and sends all of it to {to}."),
+                            params,
+                        );
+                        f.confirm = Some("GIVE");
+                        f
+                    } else {
+                        finding(
+                            "solana_close_elsewhere",
+                            Level::Amber,
+                            format!("Closes a token account and sends its SOL to {to}."),
+                            params,
+                        )
+                    });
                 }
             }
             Instruction::TokenBurn {
@@ -1411,5 +1425,51 @@ mod tests {
         let a = solana_transaction(&r, &ME, &MAINNET, &Context::default());
         eprintln!("level {:?} confirm {:?} rules {:?}", a.level, a.confirm, rules_of(&a));
         assert_eq!(a.level, Level::Red);
+    }
+
+    /// REVIEW: closing a wrapped-SOL account to someone else sends its whole balance.
+    #[test]
+    fn review_close_wrapped_sol_elsewhere() {
+        let r = tx(
+            &[ME],
+            vec![Instruction::TokenClose {
+                program: TOKEN.key(),
+                account: [3; 32],
+                destination: THEM,
+                owner: ME,
+            }],
+        );
+        let ctx = Context {
+            solana_token_accounts: [(
+                b58(&[3; 32]),
+                SolanaTokenAccount {
+                    owner: b58(&ME),
+                    mint: "So11111111111111111111111111111111111111112".into(),
+                },
+            )]
+            .into(),
+            ..Default::default()
+        };
+        let a = solana_transaction(&r, &ME, &MAINNET, &ctx);
+        eprintln!("level {:?} confirm {:?} rules {:?}", a.level, a.confirm, rules_of(&a));
+        assert_eq!(a.level, Level::Red);
+        assert_eq!(a.confirm, Some("GIVE"));
+        // Whose token the wallet can't tell: it may be wrapped SOL.
+        let a = solana_transaction(&r, &ME, &MAINNET, &Context::default());
+        assert_eq!((a.level, a.confirm), (Level::Red, Some("GIVE")));
+        // Any other token closes only empty: its rent goes.
+        let usdc = Context {
+            solana_token_accounts: [(
+                b58(&[3; 32]),
+                SolanaTokenAccount {
+                    owner: b58(&ME),
+                    mint: "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v".into(),
+                },
+            )]
+            .into(),
+            ..Default::default()
+        };
+        let a = solana_transaction(&r, &ME, &MAINNET, &usdc);
+        assert_eq!((a.level, a.confirm), (Level::Amber, None));
     }
 }
